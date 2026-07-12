@@ -425,7 +425,7 @@ func (g *Guard) Tick() {
 			continue
 		}
 		if current == nil {
-			_ = g.storeMarkActive(rec.AuthIndex) // drop missing
+			_ = g.storeRemove(rec.AuthIndex) // credential gone
 			continue
 		}
 		// Fresh state read.
@@ -462,14 +462,14 @@ func (g *Guard) deleteForDeadCredential(authIndex string, ev UsageEvent) {
 	}
 	if current == nil {
 		g.logf("info", "死号账号已不存在 auth=%s", authIndex)
-		_ = g.storeMarkActive(authIndex)
+		_ = g.storeRemove(authIndex)
 		return
 	}
 	if err := g.auth.Delete(authIndex); err != nil {
 		g.logf("error", "死号删除失败 auth=%s file=%s: %v", authIndex, current.Name, err)
 		return
 	}
-	_ = g.storeMarkActive(authIndex)
+	_ = g.storeRemove(authIndex)
 	if g.store != nil {
 		_ = g.store.AppendDelete(DeleteEvent{
 			AuthIndex:   authIndex,
@@ -645,6 +645,34 @@ func (g *Guard) storeMarkActive(authIndex string) error {
 		return nil
 	}
 	return store.MarkActive(authIndex)
+}
+
+func (g *Guard) storeRemove(authIndex string) error {
+	g.mu.Lock()
+	store := g.store
+	g.mu.Unlock()
+	if store == nil {
+		return nil
+	}
+	return store.Remove(authIndex)
+}
+
+// PruneMissingInventory drops tracked records for credentials no longer in CPA.
+// Keeps only nothing: deleted credentials should not ghost in account list.
+func (g *Guard) PruneMissingInventory(inCPA map[string]bool) int {
+	if inCPA == nil {
+		return 0
+	}
+	snap := g.Snapshot()
+	n := 0
+	for k := range snap {
+		if !inCPA[k] {
+			if err := g.storeRemove(k); err == nil {
+				n++
+			}
+		}
+	}
+	return n
 }
 
 func (g *Guard) storeDue(now time.Time) []AccountRecord {

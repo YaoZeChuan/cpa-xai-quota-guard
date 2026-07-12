@@ -155,6 +155,21 @@ func (s *Store) MarkActive(authIndex string) error {
 	return s.persistLocked()
 }
 
+// Remove deletes an account record entirely (credential gone from CPA).
+func (s *Store) Remove(authIndex string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.Accounts == nil {
+		return nil
+	}
+	if _, ok := s.Accounts[authIndex]; !ok {
+		return nil
+	}
+	delete(s.Accounts, authIndex)
+	s.Updated = time.Now().UnixMilli()
+	return s.persistLocked()
+}
+
 func (s *Store) DueAutoDisabled(now time.Time) []AccountRecord {
 	s.mu.Lock()
 	defer s.mu.Unlock()

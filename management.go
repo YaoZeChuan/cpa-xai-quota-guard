@@ -330,18 +330,11 @@ func stateResponse(req managementRequest) ([]byte, error) {
 		byIndex[f.AuthIndex] = f
 		inCPA[f.AuthIndex] = true
 	}
-	// Include tracked keys that may have been deleted from CPA but still in state.
-	for k := range tracked {
-		if _, ok := byIndex[k]; !ok {
-			a := tracked[k]
-			byIndex[k] = xaiquota.AuthFile{
-				AuthIndex: a.AuthIndex,
-				Name:      a.FileName,
-				Provider:  firstNonEmpty(a.Provider, "xai"),
-				Account:   a.Account,
-				Disabled:  a.State != xaiquota.StateActive,
-			}
-		}
+	// Drop plugin state for credentials no longer present in CPA inventory.
+	// Previously we re-injected missing tracked keys as ghosts, so deleted/re-enabled
+	// accounts stayed wrong in the account table until manual cleanup.
+	if n := g.PruneMissingInventory(inCPA); n > 0 {
+		tracked = g.Snapshot()
 	}
 
 	// Focus view: only materialize tracked/hot accounts into the table payload.

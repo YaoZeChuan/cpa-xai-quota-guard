@@ -387,7 +387,7 @@ func (g *Guard) probeOneCredential(f AuthFile, authDir string, client *http.Clie
 				httpCode:  code,
 			}
 		}
-		_ = g.storeMarkActive(f.AuthIndex)
+		_ = g.storeRemove(f.AuthIndex)
 		if g.store != nil {
 			_ = g.store.AppendDelete(DeleteEvent{
 				AuthIndex:   f.AuthIndex,
