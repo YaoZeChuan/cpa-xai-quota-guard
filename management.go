@@ -71,8 +71,8 @@ func buildManagementRegistration() managementRegistration {
 			{Method: "GET", Path: "/cpa-xai-quota-guard/export", Description: "导出今日用量 JSON"},
 			{Method: "POST", Path: "/cpa-xai-quota-guard/toggle", Description: "开关 enabled"},
 			{Method: "POST", Path: "/cpa-xai-quota-guard/run", Description: "手动触发恢复扫描"},
-		{Method: "POST", Path: "/cpa-xai-quota-guard/patrol", Description: "启动主动巡查(全量：启用凭证+spending冷却号)"},
-		{Method: "POST", Path: "/cpa-xai-quota-guard/patrol/spending", Description: "仅巡查 spending_limit 冷却号(改模型后复查)"},
+		{Method: "POST", Path: "/cpa-xai-quota-guard/patrol", Description: "全量巡查：仅当前启用的 xAI 凭证"},
+		{Method: "POST", Path: "/cpa-xai-quota-guard/patrol/spending", Description: "仅复核：plugin_auto 冷却号(429 free-usage 与 402 spending)"},
 		{Method: "GET", Path: "/cpa-xai-quota-guard/patrol/status", Description: "巡查状态与日志"},
 		{Method: "POST", Path: "/cpa-xai-quota-guard/patrol/stop", Description: "停止当前巡查"},
 		{Method: "POST", Path: "/cpa-xai-quota-guard/patrol/config", Description: "保存定时巡查配置"},
@@ -574,6 +574,7 @@ func stateResponse(req managementRequest) ([]byte, error) {
 			"patrol_batch_size":            cfg.PatrolBatchSize,
 			"patrol_model":                cfg.PatrolModel,
 			"patrol_auto_model_switch":   cfg.PatrolAutoModelSwitch,
+			"patrol_initial_delay_sec":  cfg.PatrolInitialDelaySec,
 			"patrol_proxy_url":           cfg.PatrolProxyURL,
 			"patrol_proxy_set":           cfg.PatrolProxyURL != "",
 		},
@@ -685,6 +686,7 @@ func configResponse() ([]byte, error) {
 		"patrol_batch_size":      cfg.PatrolBatchSize,
 		"patrol_model":          cfg.PatrolModel,
 		"patrol_auto_model_switch": cfg.PatrolAutoModelSwitch,
+		"patrol_initial_delay_sec":  cfg.PatrolInitialDelaySec,
 		"patrol_proxy_url":      cfg.PatrolProxyURL,
 		"patrol_proxy_set":      cfg.PatrolProxyURL != "",
 	})
@@ -788,15 +790,16 @@ func patrolConfigResponse(req managementRequest) ([]byte, error) {
 		})
 	}
 	var body struct {
-		PatrolEnabled   *bool   `json:"patrol_enabled"`
-		PatrolInterval  *float64 `json:"patrol_interval"`
-		PatrolTimeout   *float64 `json:"patrol_timeout"`
-		PatrolAuthDir   *string `json:"patrol_auth_dir"`
-		PatrolProxyURL  *string `json:"patrol_proxy_url"`
-		PatrolConcurrency *float64 `json:"patrol_concurrency"`
-		PatrolBatchSize *float64 `json:"patrol_batch_size"`
-		PatrolModel           *string  `json:"patrol_model"`
-		PatrolAutoModelSwitch *bool    `json:"patrol_auto_model_switch"`
+		PatrolEnabled          *bool    `json:"patrol_enabled"`
+		PatrolInterval         *float64 `json:"patrol_interval"`
+		PatrolTimeout          *float64 `json:"patrol_timeout"`
+		PatrolAuthDir          *string  `json:"patrol_auth_dir"`
+		PatrolProxyURL         *string  `json:"patrol_proxy_url"`
+		PatrolConcurrency      *float64 `json:"patrol_concurrency"`
+		PatrolBatchSize        *float64 `json:"patrol_batch_size"`
+		PatrolModel            *string  `json:"patrol_model"`
+		PatrolAutoModelSwitch  *bool    `json:"patrol_auto_model_switch"`
+		PatrolInitialDelaySec  *float64 `json:"patrol_initial_delay_sec"`
 	}
 	_ = json.Unmarshal(req.Body, &body)
 	cfg := guard().Config()
@@ -831,6 +834,9 @@ func patrolConfigResponse(req managementRequest) ([]byte, error) {
 	if body.PatrolAutoModelSwitch != nil {
 		cfg.PatrolAutoModelSwitch = *body.PatrolAutoModelSwitch
 	}
+	if body.PatrolInitialDelaySec != nil && *body.PatrolInitialDelaySec >= 0 {
+		cfg.PatrolInitialDelaySec = *body.PatrolInitialDelaySec
+	}
 	// Persist full patrol settings into CPA plugin config (GET+merge+PUT).
 	// Always write patrol_proxy_url (including empty) so clear/save is real.
 	patch := map[string]any{
@@ -842,6 +848,7 @@ func patrolConfigResponse(req managementRequest) ([]byte, error) {
 		"patrol_batch_size":        cfg.PatrolBatchSize,
 		"patrol_model":             cfg.PatrolModel,
 		"patrol_auto_model_switch": cfg.PatrolAutoModelSwitch,
+		"patrol_initial_delay_sec":  cfg.PatrolInitialDelaySec,
 		"patrol_proxy_url":         cfg.PatrolProxyURL,
 	}
 	if err := writePluginConfig(cfg, patch); err != nil {
@@ -859,6 +866,7 @@ func patrolConfigResponse(req managementRequest) ([]byte, error) {
 		"patrol_batch_size":        cfg.PatrolBatchSize,
 		"patrol_model":             cfg.PatrolModel,
 		"patrol_auto_model_switch": cfg.PatrolAutoModelSwitch,
+		"patrol_initial_delay_sec":  cfg.PatrolInitialDelaySec,
 		"patrol_proxy_url":         cfg.PatrolProxyURL,
 		"patrol_proxy_set":         cfg.PatrolProxyURL != "",
 	})
@@ -1063,6 +1071,9 @@ code{background:#f1f5f9;padding:.1rem .3rem;border-radius:4px;font-size:.82rem}
       <label style="font-size:.85rem">超时(秒)
         <input id="cfgPatrolTO" type="number" min="1" step="1" style="width:60px" placeholder="15">
       </label>
+      <label style="font-size:.85rem" title="插件加载后首次定时巡查延迟，避免重启立刻全量打上游">首轮延迟(秒)
+        <input id="cfgPatrolInitDelay" type="number" min="0" step="1" style="width:70px" placeholder="60">
+      </label>
       <label style="font-size:.85rem">并发
         <input id="cfgPatrolCon" type="number" min="1" step="1" style="width:60px" placeholder="8">
       </label>
@@ -1094,8 +1105,8 @@ code{background:#f1f5f9;padding:.1rem .3rem;border-radius:4px;font-size:.82rem}
     <div class="muted" style="margin-top:.4rem;font-size:.8rem" id="patrolCfgHint">配置加载中…</div>
     <hr style="border:none;border-top:1px solid var(--border);margin:.7rem 0">
     <div class="row" style="gap:.6rem;flex-wrap:wrap;align-items:center">
-      <button id="patrolBtn" class="warn" onclick="patrolStart()" title="只扫当前启用中的 xAI 凭证（跳过所有已禁用）">全量巡查</button>
-      <button id="patrolSpendBtn" class="primary" onclick="patrolSpendingStart()" title="只扫已禁用的 plugin_auto 冷却号（不含启用中凭证）">仅复查冷却号</button>
+      <button id="patrolBtn" class="warn" onclick="patrolStart()" title="全量：只扫当前启用中的 xAI（跳过全部已禁用，含冷却号）">全量巡查</button>
+      <button id="patrolSpendBtn" class="primary" onclick="patrolSpendingStart()" title="仅复核：只扫 plugin_auto 已禁用冷却号（429 free-usage 与 402 spending；不含启用中）">仅复查冷却号</button>
       <button id="patrolStopBtn" class="off" onclick="patrolStop()" style="display:none">停止巡查</button>
       <span id="patrolStatus" class="muted" style="font-size:.82rem">空闲</span>
     </div>
@@ -1155,6 +1166,8 @@ code{background:#f1f5f9;padding:.1rem .3rem;border-radius:4px;font-size:.82rem}
         <option value="focus" selected>关注(异常+用量)</option>
         <option value="all">全部账号</option>
         <option value="auto">自动停用</option>
+        <option value="sig_free">信号:429免费额度</option>
+        <option value="sig_spending">信号:402积分</option>
         <option value="due">已到点</option>
         <option value="manual">用户手动</option>
         <option value="hot">今日有用量</option>
@@ -1175,8 +1188,8 @@ code{background:#f1f5f9;padding:.1rem .3rem;border-radius:4px;font-size:.82rem}
     </div>
     <div class="acc-table-wrap">
       <table class="acc">
-        <thead><tr><th style="min-width:160px">账号</th><th style="min-width:110px">状态</th><th style="min-width:130px">恢复</th><th style="min-width:150px">今日用量</th><th style="min-width:180px">原因 / 说明</th></tr></thead>
-        <tbody id="accBody"><tr><td colspan="5" class="muted">加载中…</td></tr></tbody>
+        <thead><tr><th style="min-width:150px">账号</th><th style="min-width:100px">状态</th><th style="min-width:100px">信号</th><th style="min-width:120px">恢复</th><th style="min-width:140px">今日用量</th><th style="min-width:170px">原因 / 说明</th></tr></thead>
+        <tbody id="accBody"><tr><td colspan="6" class="muted">加载中…</td></tr></tbody>
       </table>
     </div>
   </div>
@@ -1388,6 +1401,10 @@ function decodeEntities(s){
 function humanReason(a){
   let raw = decodeEntities(a.reason || "");
   const signal = a.signal || "";
+  const sk = signalKind(signal + " " + raw);
+  if(sk === "spending" && (!raw || raw.trim().startsWith("{"))) return "402 积分/订阅耗尽（冷却不删，巡查可恢复）";
+  if(sk === "free" && (!raw || raw.trim().startsWith("{"))) return "429 免费额度用尽（rolling 24h，到期自动恢复）";
+  if(sk === "region") return "区域/模型不可用（不删凭证）";
   // already human-friendly
   if(raw && !raw.trim().startsWith("{") && raw.indexOf("免费额度")>=0) return raw;
   if(raw && !raw.trim().startsWith("{") && raw.indexOf("后可恢复")>=0) return raw;
@@ -1432,6 +1449,33 @@ function patrolHttpLabel(code){
     "0":"网络","-1":"超时","-2":"取消","-3":"DNS","-4":"TLS","-5":"连接"
   };
   return labels[c] || ("HTTP "+c);
+}
+function signalKind(sig){
+  const s = String(sig||"");
+  if(!s) return "";
+  if(/spending-limit|spending_limit|run out of credits|personal-team-blocked/i.test(s)) return "spending";
+  if(/free-usage|free_usage|short_window|subscription:free/i.test(s)) return "free";
+  if(/permission-denied|chat endpoint/i.test(s)) return "perm";
+  if(/invalid|expired|no auth context/i.test(s)) return "auth";
+  if(/region|not available in your region/i.test(s)) return "region";
+  return "other";
+}
+function signalLabel(sig){
+  const k = signalKind(sig);
+  if(k==="spending") return "402 积分/订阅";
+  if(k==="free") return "429 免费额度";
+  if(k==="perm") return "403 权限";
+  if(k==="auth") return "401 凭证";
+  if(k==="region") return "区域/模型";
+  if(!sig) return "—";
+  const short = String(sig).replace(/^body\.error\.code=/,"");
+  return short.length>28 ? short.slice(0,28)+"…" : short;
+}
+function signalTag(sig){
+  const k = signalKind(sig);
+  if(!k) return '<span class="muted">—</span>';
+  const cls = k==="spending" ? "tag auto" : k==="free" ? "tag due" : k==="perm"||k==="auth" ? "tag manual" : "tag cpa";
+  return '<span class="'+cls+'" title="'+esc(String(sig||""))+'">'+esc(signalLabel(sig))+'</span>';
 }
 function stateTag(st, src, health){
   if(health==="due") return '<span class="tag due">已到点待恢复</span>';
@@ -1621,6 +1665,8 @@ function renderAccountTable(){
     const h = accountHealth(a, nowMs);
     if(filter === "focus" && !isFocusHealth(h)) return false;
     if(filter === "auto" && h !== "auto" && h !== "due") return false;
+    if(filter === "sig_free" && signalKind(a.signal) !== "free") return false;
+    if(filter === "sig_spending" && signalKind(a.signal) !== "spending") return false;
     if(filter === "due" && h !== "due") return false;
     if(filter === "manual" && h !== "manual") return false;
     if(filter === "active" && h !== "active") return false;
@@ -1657,7 +1703,7 @@ function renderAccountTable(){
   }
   window._ACC_PAGE_FP = pageFp;
   if(!pageItems.length){
-    body.innerHTML = '<tr><td colspan="5" class="muted">无匹配账号（可切换「全部账号」或清空搜索）</td></tr>';
+    body.innerHTML = '<tr><td colspan="6" class="muted">无匹配账号（可切换「全部账号」或清空搜索）</td></tr>';
     return;
   }
   body.innerHTML = pageItems.map(function(a){
@@ -1680,17 +1726,17 @@ function renderAccountTable(){
     const name = a.account || a.file_name || a.auth_index || "—";
     const file = a.file_name || "";
     const recoverMain = a.recover_at_ms ? fmtTime(a.recover_at_ms) : "—";
-    const sig = String(a.signal||"").replace(/^body\.error\.code=/,"");
     return '<tr data-auth="'+esc(a.auth_index||"")+'" class="'+rowClass+'">'+
       '<td><div class="acc-name">'+esc(name)+'</div>'+(file?'<div class="acc-file">'+esc(file)+'</div>':'')+'</td>'+
       '<td><div class="stack">'+stateTag(a.state,a.disable_source,health)+
         (srcLabel!=="—"?'<div class="muted" style="font-size:.72rem">来源 '+esc(srcLabel)+'</div>':'')+
       '</div></td>'+
+      '<td>'+signalTag(a.signal)+'</td>'+
       '<td><div class="stack mono">'+esc(recoverMain)+
         '<div data-recover-ms="'+(a.recover_at_ms||0)+'" class="'+(cd.due?'err':'muted')+'" style="font-size:.78rem">'+esc(cd.text)+'</div>'+
       '</div></td>'+
       '<td><div class="stack"><div class="mono" style="font-weight:700">'+esc(usedMain)+'</div><div class="acc-meta">'+chips+'</div></div></td>'+
-      '<td><div class="reason-main">'+esc(reason)+'</div>'+(sig?'<div class="reason-sub">'+esc(sig)+'</div>':'')+'</td></tr>';
+      '<td><div class="reason-main">'+esc(reason)+'</div></td></tr>';
   }).join("");
 }
 
@@ -1758,14 +1804,14 @@ async function loadState(){
   const body = document.getElementById("accBody");
   try {
     if(body && !LAST_STATE){
-      body.innerHTML = '<tr><td colspan="5" class="muted">加载中…（view='+view+'）</td></tr>';
+      body.innerHTML = '<tr><td colspan="6" class="muted">加载中…（view='+view+'）</td></tr>';
     }
     const r = await api("state?view="+encodeURIComponent(view), {timeout_ms: 20000});
     if(!r || !r.ok){
       const err = (r&&r.error? (typeof r.error==="string"?r.error:(r.error.message||"error")) : "无响应");
       clearLoadingUI(err);
       if(body){
-        body.innerHTML = '<tr><td colspan="5" class="err">加载失败: '+esc(String(err))+'。请确认 Management Key；选「全部账号」更慢。</td></tr>';
+        body.innerHTML = '<tr><td colspan="6" class="err">加载失败: '+esc(String(err))+'。请确认 Management Key；选「全部账号」更慢。</td></tr>';
       }
       return;
     }
@@ -1810,6 +1856,8 @@ async function loadState(){
         document.getElementById("cfgPatrolEn").checked = !!pen;
         document.getElementById("cfgPatrolInt").value = Math.max(1, Math.round((Number(cfg.patrol_interval)||3600)/60));
         document.getElementById("cfgPatrolTO").value = cfg.patrol_timeout || 15;
+      var elDelay = document.getElementById("cfgPatrolInitDelay");
+      if(elDelay) elDelay.value = (cfg.patrol_initial_delay_sec!=null?cfg.patrol_initial_delay_sec:60);
         document.getElementById("cfgPatrolDir").value = cfg.patrol_auth_dir || "";
         document.getElementById("cfgPatrolCon").value = cfg.patrol_concurrency || 8;
         document.getElementById("cfgPatrolBatch").value = (cfg.patrol_batch_size != null ? cfg.patrol_batch_size : 0);
@@ -2015,6 +2063,7 @@ async function savePatrolConfig(){
     patrol_enabled: document.getElementById("cfgPatrolEn").checked,
     patrol_interval: Math.max(60, Math.round((Number(document.getElementById("cfgPatrolInt").value)||60)*60)),
     patrol_timeout: Number(document.getElementById("cfgPatrolTO").value)||15,
+      patrol_initial_delay_sec: Math.max(0, Number((document.getElementById("cfgPatrolInitDelay")||{}).value)||0),
     patrol_auth_dir: document.getElementById("cfgPatrolDir").value.trim(),
     patrol_proxy_url: document.getElementById("cfgPatrolProxy").value.trim(),
     patrol_concurrency: Number(document.getElementById("cfgPatrolCon").value)||8,
@@ -2337,7 +2386,11 @@ function paintPatrol(p, r){
     var err = p.last_error ? (" · 错误: " + p.last_error) : "";
     var scope = p.scope ? (" · 范围 " + (p.scope==="spending_only"?"冷却复核":"全量启用")) : "";
     var saved = p.saved_at_ms ? (" · 已持久化") : "";
-    st.textContent = "已完成 · 探测 " + probed + " · 存活 " + alive + " · 删除 " + deleted + " · 冷却 " + Number(p.total_cooldown||0) + " · 恢复 " + Number(p.total_reenabled||0) + " · 异常 " + errors + extra + scope + saved + err;
+    if(probed===0 && !p.started_at_ms && !p.completed_at_ms){
+      st.textContent = "空闲 · 尚无巡查结果（启动全量/仅复核或等待定时巡查）" + extra;
+    } else {
+      st.textContent = "已完成 · 探测 " + probed + " · 存活 " + alive + " · 删除 " + deleted + " · 冷却 " + Number(p.total_cooldown||0) + " · 恢复 " + Number(p.total_reenabled||0) + " · 异常 " + errors + extra + scope + saved + err;
+    }
     st.style.color = "var(--muted)";
     document.getElementById("patrolBtn").textContent = "启动巡查";
     document.getElementById("patrolBtn").disabled = false;

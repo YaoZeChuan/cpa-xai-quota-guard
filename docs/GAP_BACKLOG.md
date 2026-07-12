@@ -24,13 +24,13 @@
 
 | 项 | 状态 | 说明 | 建议版本 |
 |----|------|------|----------|
-| 账号状态展示 signal | partial | 有状态标签，spending vs free-usage 不够醒目 | 0.2.20 |
-| 仅复核冷却号覆盖面 | partial | 含 plugin_auto 冷却；是否含全部 spending/free 文案需 UI 说明 | 0.2.20 |
+| 账号状态展示 signal | done | 独立信号列 + 筛选 | 0.2.20 |
+| 仅复核冷却号覆盖面 | done | 文案/API 说明与实现一致 | 0.2.20 |
 | 巡查结果双汇总 | partial→done | 0.2.19 去掉动作条重复；需用户实测确认 | 验证 |
 | 日志持久化 | partial | delete/action/last_patrol 有；recent_log 截断 500 | 可接受 |
 | used_today 历史污染 | open | 0.2.18 前 ObserveFreeQuota 可能抬高；无自动清洗 | 0.2.20 工具/文档 |
 | 探测代理会话复用 | partial | 有 patrolHTTP 缓存；代理变更 Invalidate | 观察 |
-| 定时巡查重启即触发 | open | 日志见 interval 触发；是否应延迟首轮可配置 | 0.2.20 |
+| 定时巡查重启即触发 | done | patrol_initial_delay_sec 默认 60 | 0.2.20 |
 
 ## 明确未做 / 延后
 

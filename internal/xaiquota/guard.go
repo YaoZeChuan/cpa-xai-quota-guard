@@ -42,6 +42,8 @@ type Config struct {
 	// PatrolAutoModelSwitch: when probe model returns 402 spending-limit, fetch that credential's
 	// /models list and try alternates before marking spending cooldown. Off = only PatrolModel.
 	PatrolAutoModelSwitch bool
+	// PatrolInitialDelaySec: delay first scheduled patrol after start (0=immediate on first tick).
+	PatrolInitialDelaySec float64
 
 }
 
@@ -63,6 +65,7 @@ func Defaults() Config {
 			PatrolConcurrency: 8,
 			PatrolModel:            DefaultPatrolModel,
 			PatrolAutoModelSwitch:  false,
+			PatrolInitialDelaySec:  60,
 	}
 }
 
@@ -226,9 +229,22 @@ func (g *Guard) tickerLoop() {
 		// Patrol scheduling
 		if cfg.PatrolEnabled && cfg.PatrolAuthDir != "" {
 			patrolInterval := time.Duration(cfg.PatrolInterval) * time.Second
-			if patrolInterval <= 0 { patrolInterval = 3600 * time.Second }
+			if patrolInterval <= 0 {
+				patrolInterval = 3600 * time.Second
+			}
 			now := time.Now()
-			if patrolNext.IsZero() || now.After(patrolNext) {
+			if patrolNext.IsZero() {
+				// First schedule after start: optional delay so restart does not immediately hammer pool.
+				delay := time.Duration(cfg.PatrolInitialDelaySec) * time.Second
+				if delay < 0 {
+					delay = 0
+				}
+				patrolNext = now.Add(delay)
+				if delay > 0 {
+					g.logf("info", "patrol 定时首轮延迟 %v 后触发 interval=%v", delay, patrolInterval)
+				}
+			}
+			if !patrolNext.IsZero() && !now.Before(patrolNext) {
 				g.logf("info", "patrol 定时巡查触发 interval=%v next≈%v", patrolInterval, now.Add(patrolInterval).Format("15:04:05"))
 				patrolNext = now.Add(patrolInterval)
 				go g.PatrolSweep(PatrolOptions{Scope: "all"})
