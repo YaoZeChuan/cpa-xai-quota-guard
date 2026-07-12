@@ -693,9 +693,12 @@ func toggleResponse(req managementRequest) ([]byte, error) {
 	} else {
 		cfg.Enabled = !cfg.Enabled
 	}
-	cfg.RuntimeEnabledOverride = true
+	// Persist to CPA plugin config so Reconfigure keeps the value.
+	if err := writePluginConfig(cfg, map[string]any{"enabled": cfg.Enabled}); err != nil {
+		return jsonResponse(map[string]any{"ok": false, "error": err.Error(), "enabled": cfg.Enabled})
+	}
 	guard().ApplyConfig(cfg)
-	return jsonResponse(map[string]any{"ok": true, "enabled": cfg.Enabled})
+	return jsonResponse(map[string]any{"ok": true, "enabled": cfg.Enabled, "persisted": true})
 }
 
 func runResponse() ([]byte, error) {
@@ -857,16 +860,31 @@ func patrolConfigResponse(req managementRequest) ([]byte, error) {
 	if body.PatrolBatchSize != nil {
 		cfg.PatrolBatchSize = int(*body.PatrolBatchSize)
 	}
-	cfg.RuntimePatrolEnOverride = true
+	// Persist full patrol settings into CPA plugin config (GET+merge+PUT).
+	patch := map[string]any{
+		"patrol_enabled":     cfg.PatrolEnabled,
+		"patrol_interval":    cfg.PatrolInterval,
+		"patrol_timeout":     cfg.PatrolTimeout,
+		"patrol_auth_dir":    cfg.PatrolAuthDir,
+		"patrol_concurrency": cfg.PatrolConcurrency,
+		"patrol_batch_size":  cfg.PatrolBatchSize,
+	}
+	if cfg.PatrolProxyURL != "" {
+		patch["patrol_proxy_url"] = cfg.PatrolProxyURL
+	}
+	if err := writePluginConfig(cfg, patch); err != nil {
+		return jsonResponse(map[string]any{"ok": false, "error": err.Error()})
+	}
 	guard().ApplyConfig(cfg)
 	return jsonResponse(map[string]any{
-		"ok":             true,
-		"patrol_enabled":  cfg.PatrolEnabled,
-		"patrol_interval": cfg.PatrolInterval,
-		"patrol_timeout":  cfg.PatrolTimeout,
-		"patrol_auth_dir": cfg.PatrolAuthDir,
+		"ok":                 true,
+		"persisted":          true,
+		"patrol_enabled":     cfg.PatrolEnabled,
+		"patrol_interval":    cfg.PatrolInterval,
+		"patrol_timeout":     cfg.PatrolTimeout,
+		"patrol_auth_dir":    cfg.PatrolAuthDir,
 		"patrol_concurrency": cfg.PatrolConcurrency,
-		"patrol_batch_size": cfg.PatrolBatchSize,
+		"patrol_batch_size":  cfg.PatrolBatchSize,
 	})
 }
 
@@ -1719,7 +1737,7 @@ async function loadState(){
       document.getElementById("cfgPatrolProxy").value = ""; // sensitive, not echoed
       ph.textContent = pen
         ?("已启用 · 周期"+(cfg.patrol_interval||"?")+"s · 并发"+(cfg.patrol_concurrency||"?")+" · 目录"+(cfg.patrol_auth_dir||"?"))
-        :("未启用 · 需在 CPA config.yaml 中配置或通过 API 保存");
+        :("未启用 · 可勾选后点保存配置");
     }
     const list = sortAccounts(d.accounts || []);
     d.accounts = list;

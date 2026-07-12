@@ -37,9 +37,6 @@ type Config struct {
 	PatrolProxyURL   string
 	PatrolConcurrency int
 
-	// RuntimeOverrides tracks fields modified via UI that should survive Reconfigure.
-	RuntimeEnabledOverride   bool
-	RuntimePatrolEnOverride  bool
 }
 
 // Defaults returns safe defaults. enabled=false until configured.
@@ -141,16 +138,6 @@ func (g *Guard) ApplyConfig(cfg Config) {
 	}
 	if cfg.StatePath == "" {
 		cfg.StatePath = "data/cpa-xai-quota-guard-state.json"
-	}
-	// Preserve runtime overrides: if user changed Enabled/PatrolEnabled via UI,
-	// do not let Reconfigure from yaml clobber it.
-	if g.cfg.RuntimeEnabledOverride {
-		cfg.Enabled = g.cfg.Enabled
-		cfg.RuntimeEnabledOverride = true
-	}
-	if g.cfg.RuntimePatrolEnOverride {
-		cfg.PatrolEnabled = g.cfg.PatrolEnabled
-		cfg.RuntimePatrolEnOverride = true
 	}
 	// Reload store if path changed.
 	if g.store == nil || g.store.Path() != cfg.StatePath {

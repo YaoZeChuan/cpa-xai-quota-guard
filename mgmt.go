@@ -335,6 +335,39 @@ func mgmtHTTP(method, target string, body []byte, key string) ([]byte, error) {
 	return raw, nil
 }
 
+
+// writePluginConfig merges patch into CPA plugin config and PUTs full config back.
+// CPA partial PUT replaces the whole plugin config block, so we always GET+merge first.
+func writePluginConfig(cfg xaiquota.Config, patch map[string]any) error {
+	if cfg.ManagementURL == "" || cfg.ManagementKey == "" {
+		return fmt.Errorf("management not configured")
+	}
+	base := strings.TrimRight(strings.TrimSpace(cfg.ManagementURL), "/")
+	target := base + "/v0/management/plugins/" + pluginID + "/config"
+	raw, err := mgmtHTTP(http.MethodGet, target, nil, cfg.ManagementKey)
+	if err != nil {
+		return fmt.Errorf("get plugin config: %w", err)
+	}
+	var full map[string]any
+	if err := json.Unmarshal(raw, &full); err != nil {
+		return fmt.Errorf("decode plugin config: %w", err)
+	}
+	if full == nil {
+		full = map[string]any{}
+	}
+	for k, v := range patch {
+		full[k] = v
+	}
+	body, err := json.Marshal(full)
+	if err != nil {
+		return err
+	}
+	if _, err := mgmtHTTP(http.MethodPut, target, body, cfg.ManagementKey); err != nil {
+		return fmt.Errorf("put plugin config: %w", err)
+	}
+	return nil
+}
+
 func truncate(s string, n int) string {
 	s = strings.TrimSpace(s)
 	if n <= 0 || len(s) <= n {
