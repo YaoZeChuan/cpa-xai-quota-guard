@@ -1,7 +1,7 @@
 # cpa-xai-quota-guard 设计文档
 
 > xAI 专用额度/死号管控插件（CLIProxyAPI native Go）  
-> 当前实现版本：**0.2.5**（以 `main.go` 中 `pluginVer` 为准）
+> 当前实现版本：**0.2.19**（以 `main.go` 中 `pluginVer` 为准）
 
 ## 1. 目标
 
@@ -269,3 +269,17 @@ dead credential (401/402/403 白名单)
 - 配置项 patrol_model，默认 grok-4.5-build-free。
 - 禁止默认使用无免费额度的付费模型（如硬编码 grok-3），否则会全员 402 spending-limit 误伤。
 - UI 从凭证 GET /models + 建议列表选择；GET .../patrol/models。
+
+
+## 10. 状态栏与 metrics（0.2.18+）
+
+- `QuotaTotalEst`（日额度池）：默认 `xai_enabled * DefaultFreeLimit(1M)`；禁用账号不计入。
+- `UsedToday` / `UsedTotal`：仅 `usage.handle` 累加；`ObserveFreeQuota` **只写** `QuotaByAuth` 快照。
+- `RollingUsedKnown` / `RollingLimitKnown`：存活 auth 的 free-usage 快照；`liveAuth` 过滤已删号。
+- UI 进度条：今日已用 / 日额度池。
+
+## 11. 巡查异常分桶（0.2.19+）
+
+合成 HTTP 码：`-1` 超时、`-2` 取消、`-3` DNS、`-4` TLS、`-5` 连接、`0` 其它网络。  
+动作：`net_*` / `probe_http_*` / `region_block` / `cli_version` / `cooldown` / `deleted` / `alive` / `reenabled`。  
+未知 action **计 error，不计 alive**。网络失败同模型最多 3 次重试（不换模型）。

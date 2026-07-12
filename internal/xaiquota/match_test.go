@@ -270,3 +270,21 @@ func TestMatchSpendingLimitQuotaDistinctFrom429(t *testing.T) {
 	}
 }
 
+
+
+func TestRegionPermissionDeniedNotDead(t *testing.T) {
+	body := `{"code":"permission-denied","error":"The model grok-4.5 is not available in your region."}`
+	if !IsModelRegionUnavailable(403, body) {
+		t.Fatal("expected region unavailable")
+	}
+	if IsPermissionDenied(403, body) {
+		t.Fatal("region model error must NOT be dead credential")
+	}
+	dead := `{"code":"permission-denied","error":"Access to the chat endpoint is denied. Please ensure you're using the correct credentials."}`
+	if IsModelRegionUnavailable(403, dead) {
+		t.Fatal("endpoint denied is not region")
+	}
+	if !IsPermissionDenied(403, dead) {
+		t.Fatal("endpoint permission-denied must remain dead")
+	}
+}

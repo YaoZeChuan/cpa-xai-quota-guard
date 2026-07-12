@@ -1,5 +1,106 @@
 # Changelog
 
+## 0.2.19
+
+- **巡查异常状态扩展**：网络超时/取消/DNS/TLS/连接失败分桶（HTTP 合成码 -1..-5 / 0），422/5xx/区域/CLI 细分动作
+- **网络与瞬时 5xx 重试**：同模型最多 3 次（取消不重试；backoff 0.4s/0.8s）
+- **汇总单源**：去掉 chips 内重复“动作”条；进度行 + HTTP chips + 异常细分来自同一 patrol 快照；探测数与 by_http 合计校验
+- default 未知 action 不再误计为存活
+
+## 0.2.18
+
+- **状态栏额度口径重写**（日额度不等于禁用/删号/滚动 actual 混算）
+  - **日额度池** = 当前启用 xAI 数 x 1M（rolling 24h 免费档）；禁用凭证不计入
+  - **已用今日/累计** = 仅 usage.handle 真实 token；不再用 free-usage actual 抬高
+  - **滚动快照 used/limit** = 仍存活凭证的 free-usage 观测；已删号快照剔除
+  - 进度条 = 今日已用 / 日额度池
+  - ObserveFreeQuota 只写快照，不改日历 UsedToday/UsedTotal
+- 测试对齐新口径
+
+## 0.2.17
+
+- **巡查结果持久化**：计数/by_http/by_action/探测日志写入 state.json（`last_patrol`），重启后可恢复
+- 巡查过程中每 25 条 checkpoint；结束强制落盘
+- 巡查关键动作（删除/冷却/恢复/错误）同步写入 `action_history`
+- state API 附带 `patrol` 快照，UI 单源汇总（去掉重复 HTTP 文案）
+- 删除/动作历史容量提升（200/500）
+
+
+## 0.2.16
+
+- **全量巡查**：只扫**当前启用**的 xAI 凭证，跳过全部已禁用（含冷却号）
+- **仅复核冷却号**：只扫 **plugin_auto 已禁用冷却号**，不碰启用中凭证
+
+
+## 0.2.15
+
+- **默认探测模型**改为 `grok-4.5`（Suggested 仍含 free）
+- **定时巡查周期** UI 改为**分钟**（默认 60；配置仍存秒）
+- **删除历史 + 被动处理日志**合并为「处理日志」单表（50 条去重）
+- 含 0.2.14：巡查 HTTP 状态 chips、账号表固定分页
+
+
+## 0.2.14
+
+- **巡查 HTTP 状态统计**：按 200/429/402/403/401/426 等汇总显示（进度区 chips + 完成文案）
+  - 新增 by_http / by_action / total_cooldown / total_429_cooldown / total_402_cooldown / total_reenabled
+- **账号状态列表**：固定可视高度（height min 52vh/480px）+ 固定每页 20/30/50（上限 50，去掉 100/200）
+
+## 0.2.13
+
+- **UI**：刷新模型列表时探测模型下拉**宽度**不再被撑开
+  - 根因：patrolModelHint 与 `flex:1` 下拉同行；加载时 hint 变短 → select 被拉宽，成功后 hint 变长又缩回
+  - 修复：hint 独立成行 + 探测模型 label `max-width:420px` + 刷新按钮固定 `min-width`
+  - 模型选项仍有 24 条硬上限，避免选项暴增
+- **巡查 426**：cli-chat-proxy 返回 `CLI version (none) is outdated` 时识别为探测客户端问题
+  - 自动注入默认 Grok CLI 头（`x-grok-client-version=0.2.93` / `x-xai-token-auth` / User-Agent 等），auth 文件 headers 可覆盖
+  - 426 **永不删除**凭证；日志标记「CLI版本被拒」
+
+## 0.2.12
+
+- 审查：被动 HandleUsage 冷却/删除矩阵未改坏（region 不删、401/403 删、429/402 冷却、manual 保护、Tick 恢复）
+- 新增 **被动处理日志** 卡片（`action_history` 持久化：cooldown/delete/recover/skip_*）
+- 账号状态表：`max-height` 固定可视区 + 默认 30/页 + `auth_index` 去重 + 同页指纹跳过重复 DOM 重写，避免无效叠加/无限变长
+## 0.2.11
+
+- **探测模型不再自动回退默认**
+- 去掉 loadState 首次填充后自动 `refreshPatrolModels`（重建 select 会把选项打回 free/首项）
+- 手动刷新模型：await 后重读当前选择；dirty 时绝对保留用户模型；当前项置顶写入 options
+- 记住 `_PATROL_UI_MODEL` / `_PATROL_UI_PROXY`，避免同页刷新列表时丢失
+## 0.2.10
+
+- **代理输入框不再被 15s loadState 自动回写**
+- 根因：表单条件写成 `!dirty || !applied`，未编辑时每次轮询都会用服务端值覆盖输入
+- 现仅：首次进入页填充一次；点「刷新」且确认后可强制同步；保存成功用接口回显
+- dirty 绑定在 init 即生效
+## 0.2.9
+
+- **巡查 429 free-usage**：启用账号探测到短时额度 429 → `plugin_auto` 冷却（与 HandleUsage 一致），**绝不删除**
+- 402 spending 冷却号遇 429/200 仍自动恢复启用
+- 未识别信号的 429 记 error（不存活、不删）
+- 修正 probe 模型循环内 region 分支缩进/结构可读性
+## 0.2.8
+
+- **表单稳定**：巡查配置 dirty 标记；loadState 15s 轮询不再覆盖未保存的模型/代理/上限
+- **刷新模型列表**：保留当前 UI 选择（不再强制回 patrol_model/grok-4.5-build-free）；按钮 loading 反馈；超时 45s
+- **代理**：保存后按服务端回显；清空也写回；编辑中不被定时刷新抹掉
+- **每轮上限**：patrol_batch_size=0 为不限且可从配置正确落盘（>=0 解析）
+## 0.2.7
+
+- 巡查探测优先 `POST {base}/responses`（对齐 CPA `xai_executor`），body: `input` + `max_output_tokens`
+- `/responses` 返回 404/405 时回退 `POST /chat/completions`
+- 保留 0.2.6 错误矩阵（region/404 不删；402 冷却；真 403/401 删）
+## 0.2.6
+
+- **紧急**：`permission-denied` + `not available in your region` **不删除**凭证（IP/区域）
+- 真死号仍删：chat endpoint denied / 401 invalid
+- 探测默认 base：`cli-chat-proxy.grok.com/v1`（oauth 文件多无 base_url，旧 `api.x.ai` 易 404）
+- 404/405/422/5xx 探测记 **error**，不记存活、不删
+- 代理：`patrol_proxy_url` 保存时始终写回（含清空）；state/config **回显**；修复 UI 每次刷新清空输入
+- 模型列表：`refreshPatrolModels` 正确解包 `api().result`；空列表保留当前模型
+- 巡查配置：`patrol_auto_model_switch` 随保存持久化
+- 编译修复：`listModels` 局部变量 `any` 与内置类型冲突 → `rawObj`
+- 路线图：docs/ROADMAP_0.3.md
 ## 0.2.5
 
 - **402 spending-limit 工作流完善**

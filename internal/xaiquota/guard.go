@@ -118,6 +118,7 @@ type Guard struct {
 	stopCh chan struct{}
 	wg     sync.WaitGroup
 	patrol patrolState
+	patrolHTTP patrolHTTP
 }
 
 // NewGuard constructs a guard with durable state.
@@ -161,7 +162,11 @@ func (g *Guard) ApplyConfig(cfg Config) {
 			g.store = store
 		}
 	}
+	oldProxy := g.cfg.PatrolProxyURL
 	g.cfg = cfg
+	if strings.TrimSpace(oldProxy) != strings.TrimSpace(cfg.PatrolProxyURL) {
+		g.InvalidatePatrolHTTP()
+	}
 }
 
 func (g *Guard) Config() Config {
@@ -262,7 +267,13 @@ func (g *Guard) HandleUsage(ev UsageEvent) {
 	if authIndex == "" {
 		return
 	}
-	// Dead credentials: 403 permission-denied / 401 invalid → delete immediately.
+	// Region/model availability (IP/egress): never delete.
+	if IsModelRegionUnavailable(ev.StatusCode, ev.Body) {
+		g.logf("warn", "xAI 区域/模型不可用(不删号) auth=%s code=%d body=%s", authIndex, ev.StatusCode, truncate(ev.Body, 160))
+	g.appendAction("skip_region", "passive", authIndex, "", ev.Account, ev.StatusCode, "region", truncate(ev.Body, 160))
+		return
+	}
+	// Dead credentials: true 403 permission-denied / 401 invalid → delete immediately.
 	// 402 spending-limit is NOT deleted: plugin_auto soft-disable + patrol re-probe.
 	if IsPermissionDenied(ev.StatusCode, ev.Body) || IsInvalidCredentials(ev.StatusCode, ev.Body) {
 		g.deleteForDeadCredential(authIndex, ev)
@@ -294,6 +305,7 @@ func (g *Guard) HandleUsage(ev UsageEvent) {
 		// Time parse failure or non-short-window: silent skip with log.
 		if ev.StatusCode == 429 {
 			g.logf("info", "xAI 429 未满足短时额度条件(信号/重置时间)，跳过 auth=%s", authIndex)
+			g.appendAction("skip_parse", "passive", authIndex, "", ev.Account, ev.StatusCode, "429", "short-window signal/reset unparsed")
 		}
 		return
 	}
@@ -354,6 +366,7 @@ func (g *Guard) disableForMatch(authIndex string, ev UsageEvent, match MatchResu
 				return
 			}
 			g.logf("info", "已延长 plugin_auto 冷却 auth=%s recover_at=%s", authIndex, match.RecoverAt.Format(time.RFC3339))
+			g.appendAction("cooldown_extend", "passive", authIndex, current.Name, firstNonEmpty(ev.Account, current.Account), ev.StatusCode, match.Signal, match.Reason)
 			return
 		}
 		// Mark user manual and never auto-enable.
@@ -371,6 +384,7 @@ func (g *Guard) disableForMatch(authIndex string, ev UsageEvent, match MatchResu
 		}
 		_ = g.storeUpsert(rec)
 		g.logf("info", "账号已禁用且无本插件所有权，标记 user_manual，跳过 auth=%s", authIndex)
+		g.appendAction("skip_manual", "passive", authIndex, current.Name, firstNonEmpty(ev.Account, current.Account), ev.StatusCode, "user_manual", "already_disabled_without_plugin_ownership")
 		return
 	}
 
@@ -395,6 +409,7 @@ func (g *Guard) disableForMatch(authIndex string, ev UsageEvent, match MatchResu
 		}
 		_ = g.storeUpsert(rec)
 		g.logf("info", "禁用竞态：账号此前已禁用，标记 user_manual auth=%s", authIndex)
+		g.appendAction("skip_manual", "passive", authIndex, current.Name, firstNonEmpty(ev.Account, current.Account), ev.StatusCode, "user_manual", "pre_disabled_race")
 		return
 	}
 
@@ -420,6 +435,7 @@ func (g *Guard) disableForMatch(authIndex string, ev UsageEvent, match MatchResu
 	}
 	g.logf("warn", "xAI 额度限制已禁用 auth=%s file=%s recover_at=%s signal=%s",
 		authIndex, current.Name, match.RecoverAt.Format(time.RFC3339), match.Signal)
+	g.appendAction("cooldown", "passive", authIndex, current.Name, firstNonEmpty(ev.Account, current.Account), ev.StatusCode, match.Signal, match.Reason)
 	g.NotifyWebhook("quota_cooldown", map[string]any{
 		"auth_index": authIndex,
 		"recover_at": match.RecoverAt.Format(time.RFC3339),
@@ -465,6 +481,7 @@ func (g *Guard) Tick() {
 		}
 		_ = g.storeMarkActive(rec.AuthIndex)
 		g.logf("info", "xAI 额度重置到达，已自动启用 auth=%s file=%s", rec.AuthIndex, rec.FileName)
+		g.appendAction("recover", "tick", rec.AuthIndex, rec.FileName, rec.Account, 0, rec.Signal, "recover_at reached")
 	}
 }
 
@@ -502,6 +519,7 @@ func (g *Guard) deleteForDeadCredential(authIndex string, ev UsageEvent) {
 	}
 	g.logf("warn", "xAI 凭证失效/无权限，已删除账号 auth=%s file=%s account=%s reason=%s",
 		authIndex, current.Name, firstNonEmpty(ev.Account, current.Account), truncate(ev.Body, 160))
+	g.appendAction("delete", "passive", authIndex, current.Name, firstNonEmpty(ev.Account, current.Account), ev.StatusCode, "dead_credential", truncate(ev.Body, 160))
 	g.NotifyWebhook("dead_credential_delete", map[string]any{
 		"auth_index": authIndex,
 		"file_name":  current.Name,
@@ -515,6 +533,31 @@ func (g *Guard) ListDeletes(limit int) []DeleteEvent {
 		return nil
 	}
 	return g.store.ListDeletes(limit)
+}
+
+// ListActions returns recent passive/tick account handling logs.
+func (g *Guard) ListActions(limit int) []ActionEvent {
+	if g.store == nil {
+		return nil
+	}
+	return g.store.ListActions(limit)
+}
+
+func (g *Guard) appendAction(action, source, authIndex, fileName, account string, httpCode int, signal, reason string) {
+	if g.store == nil {
+		return
+	}
+	_ = g.store.AppendAction(ActionEvent{
+		TimeMS:    time.Now().UnixMilli(),
+		Action:    action,
+		Source:    source,
+		AuthIndex: authIndex,
+		FileName:  fileName,
+		Account:   account,
+		HTTPCode:  httpCode,
+		Signal:    signal,
+		Reason:    truncate(reason, 240),
+	})
 }
 
 func (g *Guard) recordUsageMetrics(ev UsageEvent) {
@@ -556,20 +599,19 @@ func (g *Guard) SyncInventoryUsage(successSum, failedSum, estimatePerSuccess int
 }
 
 func (g *Guard) MetricsWithInventory(xaiTotal, xaiEnabled, xaiDisabled int) MetricsView {
+	return g.MetricsWithInventoryLive(xaiTotal, xaiEnabled, xaiDisabled, nil)
+}
+
+// MetricsWithInventoryLive filters rolling free-usage snapshots to liveAuth (CPA inventory).
+func (g *Guard) MetricsWithInventoryLive(xaiTotal, xaiEnabled, xaiDisabled int, liveAuth map[string]bool) MetricsView {
 	st := UsageStats{}
 	if g.store != nil {
 		st = g.store.GetUsageStats()
 	}
 	cfg := g.Config()
-	v := BuildMetricsViewOpts(xaiTotal, xaiEnabled, xaiDisabled, st, cfg.IncludeUnobservedQuotaEst)
-	// Real tokens come from usage.handle. Strip legacy success×8000 estimates from display.
+	v := BuildMetricsViewOpts(xaiTotal, xaiEnabled, xaiDisabled, st, cfg.IncludeUnobservedQuotaEst, liveAuth)
 	v.EstimatePerSuccess = 0
-	if v.EstimatedToday > 0 {
-		if v.UsedTodayDisplay >= v.EstimatedToday {
-			v.UsedTodayDisplay -= v.EstimatedToday
-		}
-		v.EstimatedToday = 0
-	}
+	v.EstimatedToday = 0
 	return v
 }
 

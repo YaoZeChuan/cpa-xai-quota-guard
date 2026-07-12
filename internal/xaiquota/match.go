@@ -306,11 +306,48 @@ func IsSpendingLimitBlocked(statusCode int, body string) bool {
 	return false
 }
 
+
+// IsModelRegionUnavailable reports geo/IP/model availability denials.
+// These are NOT dead credentials — do not DELETE (proxy egress / region issue).
+func IsModelRegionUnavailable(statusCode int, body string) bool {
+	_ = statusCode
+	body = strings.TrimSpace(body)
+	if body == "" {
+		return false
+	}
+	lower := strings.ToLower(body)
+	strong := []string{
+		"not available in your region",
+		"not available in your country",
+		"unavailable in your region",
+		"region is not supported",
+		"model is not available in your region",
+	}
+	for _, n := range strong {
+		if strings.Contains(lower, n) {
+			return true
+		}
+	}
+	if code, _, msg := extractErrorFields(body); code != "" || msg != "" {
+		joined := strings.ToLower(code + " " + msg)
+		for _, n := range strong {
+			if strings.Contains(joined, n) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // IsPermissionDenied reports xAI credential permission failures that should
 // trigger account deletion (not cooldown). Typical: HTTP 403 + permission-denied.
+// Region/model availability is excluded (see IsModelRegionUnavailable).
 func IsPermissionDenied(statusCode int, body string) bool {
 	body = strings.TrimSpace(body)
 	lower := strings.ToLower(body)
+	if IsModelRegionUnavailable(statusCode, body) {
+		return false
+	}
 	// Strong body signals first.
 	if strings.Contains(lower, "permission-denied") ||
 		strings.Contains(lower, "permission_denied") ||

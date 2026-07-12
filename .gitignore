@@ -44,4 +44,7 @@ scripts/find_key_meta.py
 .DS_Store
 Thumbs.db
 _workspace/
+_deploy_*.tgz
+*.tgz
+!docs/**
 

@@ -332,6 +332,8 @@ func (s *Store) ObserveFreeQuota(authIndex string, actual, limit int64, at time.
 	if actual < 0 {
 		actual = 0
 	}
+	// Snapshot only. Free-usage actual/limit is a rolling window probe — do NOT add
+	// deltas into calendar UsedToday/UsedTotal (those come only from usage.handle tokens).
 	return s.mutateUsage(func(st *UsageStats) {
 		day := DayKeyShanghai(at)
 		if st.DayKey != day {
@@ -340,21 +342,6 @@ func (s *Store) ObserveFreeQuota(authIndex string, actual, limit int64, at time.
 			st.RequestsToday = 0
 			st.EstimatedToday = 0
 			st.ZeroTokenSuccessToday = 0
-		}
-		prev := st.QuotaByAuth[authIndex]
-		if prev != nil {
-			delta := actual - prev.Actual
-			if delta > 0 {
-				st.UsedToday += delta
-				st.UsedTotal += delta
-				u := st.UsageByAuth[authIndex]
-				if u == nil {
-					u = &AccountUsageSnapshot{AuthIndex: authIndex}
-					st.UsageByAuth[authIndex] = u
-				}
-				u.UsedToday += delta
-				u.UsedTotal += delta
-			}
 		}
 		st.QuotaByAuth[authIndex] = &AccountQuotaSnapshot{
 			AuthIndex:   authIndex,
@@ -368,19 +355,29 @@ func (s *Store) ObserveFreeQuota(authIndex string, actual, limit int64, at time.
 }
 
 // BuildMetricsView combines auth-file inventory + durable usage/quota snapshots.
-// includeUnobservedEst controls whether unobserved xAI accounts get default 1e6 each.
+// liveAuth: if non-nil, only quota snapshots whose auth_index is still present are counted
+// (deleted credentials must not inflate rolling pool).
 func BuildMetricsView(xaiTotal, xaiEnabled, xaiDisabled int, st UsageStats) MetricsView {
-	return BuildMetricsViewOpts(xaiTotal, xaiEnabled, xaiDisabled, st, false)
+	return BuildMetricsViewOpts(xaiTotal, xaiEnabled, xaiDisabled, st, false, nil)
 }
 
-// BuildMetricsViewOpts allows controlling unobserved estimate inclusion.
-func BuildMetricsViewOpts(xaiTotal, xaiEnabled, xaiDisabled int, st UsageStats, includeUnobservedEst bool) MetricsView {
+// BuildMetricsViewOpts:
+//   - Daily total quota (QuotaTotalEst) = enabled xAI * DefaultFreeLimit (1M rolling 24h each).
+//     Disabled credentials are NOT capacity; includeUnobservedEst=false → known live limits only.
+//   - Used today/total = usage.handle real tokens only (no free-usage actual floor, no success×N).
+//   - Rolling used/limit = free-usage snapshots for still-live auth only.
+func BuildMetricsViewOpts(xaiTotal, xaiEnabled, xaiDisabled int, st UsageStats, includeUnobservedEst bool, liveAuth map[string]bool) MetricsView {
 	st = *EnsureUsageStats(&st)
 	var usedKnown, limitKnown int64
 	known := 0
-	for _, q := range st.QuotaByAuth {
+	for k, q := range st.QuotaByAuth {
 		if q == nil || q.Limit <= 0 {
 			continue
+		}
+		if liveAuth != nil {
+			if _, ok := liveAuth[k]; !ok {
+				continue // stale / deleted credential snapshot
+			}
 		}
 		known++
 		usedKnown += q.Actual
@@ -390,35 +387,35 @@ func BuildMetricsViewOpts(xaiTotal, xaiEnabled, xaiDisabled int, st UsageStats, 
 	if def <= 0 {
 		def = DefaultFreeLimit
 	}
-	remaining := xaiTotal - known
-	if remaining < 0 {
-		remaining = 0
+	// Daily free-tier capacity: each ENABLED account ≈ 1M / rolling 24h.
+	// Disabled accounts contribute 0 usable capacity.
+	dailyCapEnabled := int64(xaiEnabled) * def
+	// Unobserved among enabled (not total inventory): how many enabled lack a snapshot.
+	// Approximate: if we only have live set, known may include disabled-with-snapshot;
+	// when liveAuth given, known is live-only. Enabled without snapshot ≈ max(0, enabled-known).
+	unobservedEnabled := xaiEnabled - known
+	if unobservedEnabled < 0 {
+		unobservedEnabled = 0
 	}
-	// Free-tier pool estimate: known observed limits + unobserved * default 1M.
-	// Always fill unobserved so 522 accounts do not collapse to ~48 known * 1M.
-	// Cap at xaiTotal * def so stale quota data from deleted credentials doesn't inflate.
-	inventoryCap := int64(xaiTotal) * def
-	totalEst := limitKnown + int64(remaining)*def
-	if !includeUnobservedEst {
-		// known-only mode (legacy/debug): ignore unobserved free-tier assumption
+	var totalEst int64
+	if includeUnobservedEst {
+		// Primary product view: daily pool = all currently-enabled free slots.
+		totalEst = dailyCapEnabled
+	} else {
+		// Strict: only sum observed limits on live accounts (no fill).
 		totalEst = limitKnown
 	}
-	// If inventory is large but nothing observed yet, still show inventory * default.
-	if totalEst == 0 && xaiTotal > 0 {
-		totalEst = inventoryCap
-	}
-	// Cap: never exceed inventory * default (stale quota from deleted creds).
-	if inventoryCap > 0 && totalEst > inventoryCap {
-		totalEst = inventoryCap
-	}
-	if xaiTotal == 0 {
+	if xaiEnabled == 0 {
 		totalEst = 0
 	}
-	usedTotalDisplay := st.UsedTotal + st.EstimatedTotal
-	if usedKnown > usedTotalDisplay {
-		usedTotalDisplay = usedKnown
+	// Never count disabled inventory as daily capacity.
+	if totalEst > dailyCapEnabled && dailyCapEnabled > 0 {
+		totalEst = dailyCapEnabled
 	}
-	usedTodayDisplay := st.UsedToday + st.EstimatedToday
+
+	// Real usage only — never floor with rolling actual (that mixes 24h window into "used total").
+	usedTodayDisplay := st.UsedToday
+	usedTotalDisplay := st.UsedTotal
 
 	alert := st.ZeroTokenStreak >= ZeroTokenAlertThreshold
 	alertMsg := ""
@@ -426,39 +423,39 @@ func BuildMetricsViewOpts(xaiTotal, xaiEnabled, xaiDisabled int, st UsageStats, 
 		alertMsg = "连续成功请求缺少 usage Detail token，可能 CPA 未发布用量明细；日历今日累计可能偏低。"
 	}
 
-	note := "仅xAI；日历今日=usage.handle 真实 token；滚动池=free-usage actual/limit；不默认 success×8000。"
+	note := "仅xAI；日额度池=启用凭证×1M(rolling 24h)；已用=usage 真实token；滚动池=存活凭证 free-usage 快照；禁用不计入额度与已用。"
 	return MetricsView{
-		XAITotal:             xaiTotal,
-		XAIEnabled:           xaiEnabled,
-		XAIDisabled:          xaiDisabled,
-		QuotaTotalEst:        totalEst,
-		QuotaUsedKnown:       usedKnown,
-		QuotaLimitKnown:      limitKnown,
-		QuotaKnownAccounts:   known,
-		QuotaTotalKnownOnly:  limitKnown,
-		UnobservedAccounts:   remaining,
-		IncludeUnobservedEst: includeUnobservedEst,
-		UsedToday:            st.UsedToday,
-		UsedTotal:            st.UsedTotal,
-		UsedTodayDisplay:     usedTodayDisplay,
-		UsedTotalDisplay:     usedTotalDisplay,
-		RequestsToday:        st.RequestsToday,
-		RequestsTotal:        st.RequestsTotal,
-		EstimatedToday:       st.EstimatedToday,
-		DefaultLimitPerAcct:  def,
-		EstimatePerSuccess:   0,
-		DayKey:               st.DayKey,
-		RollingUsedKnown:     usedKnown,
-		RollingLimitKnown:    limitKnown,
-		RollingAccounts:      known,
+		XAITotal:              xaiTotal,
+		XAIEnabled:            xaiEnabled,
+		XAIDisabled:           xaiDisabled,
+		QuotaTotalEst:         totalEst,
+		QuotaUsedKnown:        usedKnown,
+		QuotaLimitKnown:       limitKnown,
+		QuotaKnownAccounts:    known,
+		QuotaTotalKnownOnly:   limitKnown,
+		UnobservedAccounts:    unobservedEnabled,
+		IncludeUnobservedEst:  includeUnobservedEst,
+		UsedToday:             st.UsedToday,
+		UsedTotal:             st.UsedTotal,
+		UsedTodayDisplay:      usedTodayDisplay,
+		UsedTotalDisplay:      usedTotalDisplay,
+		RequestsToday:         st.RequestsToday,
+		RequestsTotal:         st.RequestsTotal,
+		EstimatedToday:        0, // never surface success×N estimates in dashboard
+		DefaultLimitPerAcct:   def,
+		EstimatePerSuccess:    0,
+		DayKey:                st.DayKey,
+		RollingUsedKnown:      usedKnown,
+		RollingLimitKnown:     limitKnown,
+		RollingAccounts:       known,
 		ZeroTokenSuccessToday: st.ZeroTokenSuccessToday,
-		ZeroTokenStreak:      st.ZeroTokenStreak,
-		DetailMissingAlert:   alert,
-		DetailAlertMessage:   alertMsg,
-		BackfillSource:       st.BackfillSource,
-		BackfillAtMS:         st.BackfillAtMS,
-		BackfillTokensFloor:  st.BackfillTokensFloor,
-		Note:                 note,
+		ZeroTokenStreak:       st.ZeroTokenStreak,
+		DetailMissingAlert:    alert,
+		DetailAlertMessage:    alertMsg,
+		BackfillSource:        st.BackfillSource,
+		BackfillAtMS:          st.BackfillAtMS,
+		BackfillTokensFloor:   st.BackfillTokensFloor,
+		Note:                  note,
 	}
 }
 

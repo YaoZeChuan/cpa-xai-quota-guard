@@ -49,6 +49,56 @@ type DeleteEvent struct {
 	DeletedAtMS int64  `json:"deleted_at_ms"`
 }
 
+// ActionEvent is a durable passive/active account handling log entry.
+// Action: cooldown | cooldown_extend | delete | recover | skip_manual | skip_region | skip_parse | reenable
+// Source: passive | tick | patrol
+type ActionEvent struct {
+	TimeMS    int64  `json:"time_ms"`
+	Action    string `json:"action"`
+	Source    string `json:"source,omitempty"`
+	AuthIndex string `json:"auth_index,omitempty"`
+	FileName  string `json:"file_name,omitempty"`
+	Account   string `json:"account,omitempty"`
+	HTTPCode  int    `json:"http_code,omitempty"`
+	Signal    string `json:"signal,omitempty"`
+	Reason    string `json:"reason,omitempty"`
+}
+
+// PatrolLogEntry is one durable patrol probe log line (also used in-memory).
+type PatrolLogEntry struct {
+	TimeMS    int64  `json:"time_ms"`
+	AuthIndex string `json:"auth_index,omitempty"`
+	FileName  string `json:"file_name,omitempty"`
+	Account   string `json:"account,omitempty"`
+	Action    string `json:"action,omitempty"`
+	Reason    string `json:"reason,omitempty"`
+	HTTPCode  int    `json:"http_code,omitempty"`
+}
+
+// PatrolSnapshot is the last completed (or last checkpoint) patrol sweep, durable across restarts.
+type PatrolSnapshot struct {
+	Running         bool              `json:"running"`
+	StartedAtMS     int64             `json:"started_at_ms,omitempty"`
+	CompletedAtMS   int64             `json:"completed_at_ms,omitempty"`
+	TotalCandidates int               `json:"total_candidates"`
+	TotalProbed     int               `json:"total_probed"`
+	TotalDeleted    int               `json:"total_deleted"`
+	TotalErrors     int               `json:"total_errors"`
+	TotalAlive      int               `json:"total_alive"`
+	TotalSkipped    int               `json:"total_skipped"`
+	TotalCooldown       int               `json:"total_cooldown"`
+	Total429CD      int               `json:"total_429_cooldown"`
+	TotalSpendCD    int               `json:"total_402_cooldown"`
+	TotalReenabled  int               `json:"total_reenabled"`
+	ByHTTP          map[string]int    `json:"by_http,omitempty"`
+	ByAction        map[string]int    `json:"by_action,omitempty"`
+	Workers         int               `json:"workers,omitempty"`
+	LastError       string            `json:"last_error,omitempty"`
+	Scope           string            `json:"scope,omitempty"`
+	RecentLog       []PatrolLogEntry  `json:"recent_log,omitempty"`
+	SavedAtMS       int64             `json:"saved_at_ms,omitempty"`
+}
+
 // Store is a JSON-backed durable state store.
 type Store struct {
 	mu       sync.Mutex
@@ -56,8 +106,10 @@ type Store struct {
 	Version  int                      `json:"version"`
 	Updated  int64                    `json:"updated_at_ms"`
 	Accounts map[string]*AccountRecord `json:"accounts"`
-	Usage         *UsageStats   `json:"usage,omitempty"`
-	DeleteHistory []DeleteEvent `json:"delete_history,omitempty"`
+	Usage         *UsageStats    `json:"usage,omitempty"`
+	DeleteHistory []DeleteEvent  `json:"delete_history,omitempty"`
+	ActionHistory []ActionEvent  `json:"action_history,omitempty"`
+	LastPatrol    *PatrolSnapshot `json:"last_patrol,omitempty"`
 }
 
 // NewStore loads existing state or creates an empty one.
@@ -209,8 +261,8 @@ func (s *Store) AppendDelete(ev DeleteEvent) error {
 	}
 	s.DeleteHistory = append(s.DeleteHistory, ev)
 	// keep last 100
-	if len(s.DeleteHistory) > 100 {
-		s.DeleteHistory = s.DeleteHistory[len(s.DeleteHistory)-100:]
+	if len(s.DeleteHistory) > 200 {
+		s.DeleteHistory = s.DeleteHistory[len(s.DeleteHistory)-200:]
 	}
 	s.Updated = time.Now().UnixMilli()
 	return s.persistLocked()
@@ -236,6 +288,84 @@ func (s *Store) ListDeletes(limit int) []DeleteEvent {
 	return out
 }
 
+func (s *Store) AppendAction(ev ActionEvent) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if ev.TimeMS == 0 {
+		ev.TimeMS = time.Now().UnixMilli()
+	}
+	s.ActionHistory = append(s.ActionHistory, ev)
+	if len(s.ActionHistory) > 500 {
+		s.ActionHistory = s.ActionHistory[len(s.ActionHistory)-500:]
+	}
+	s.Updated = time.Now().UnixMilli()
+	return s.persistLocked()
+}
+
+func (s *Store) ListActions(limit int) []ActionEvent {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if limit <= 0 || limit > len(s.ActionHistory) {
+		limit = len(s.ActionHistory)
+	}
+	if limit == 0 {
+		return nil
+	}
+	src := s.ActionHistory
+	start := len(src) - limit
+	out := make([]ActionEvent, limit)
+	copy(out, src[start:])
+	for i, j := 0, len(out)-1; i < j; i, j = i+1, j-1 {
+		out[i], out[j] = out[j], out[i]
+	}
+	return out
+}
+
+
+func (s *Store) SaveLastPatrol(snap PatrolSnapshot) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if snap.SavedAtMS == 0 {
+		snap.SavedAtMS = time.Now().UnixMilli()
+	}
+	// cap log
+	if len(snap.RecentLog) > 300 {
+		snap.RecentLog = snap.RecentLog[len(snap.RecentLog)-300:]
+	}
+	cp := snap
+	s.LastPatrol = &cp
+	s.Updated = snap.SavedAtMS
+	return s.persistLocked()
+}
+
+func (s *Store) GetLastPatrol() *PatrolSnapshot {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.LastPatrol == nil {
+		return nil
+	}
+	cp := *s.LastPatrol
+	if cp.ByHTTP != nil {
+		m := make(map[string]int, len(cp.ByHTTP))
+		for k, v := range cp.ByHTTP {
+			m[k] = v
+		}
+		cp.ByHTTP = m
+	}
+	if cp.ByAction != nil {
+		m := make(map[string]int, len(cp.ByAction))
+		for k, v := range cp.ByAction {
+			m[k] = v
+		}
+		cp.ByAction = m
+	}
+	if cp.RecentLog != nil {
+		log := make([]PatrolLogEntry, len(cp.RecentLog))
+		copy(log, cp.RecentLog)
+		cp.RecentLog = log
+	}
+	return &cp
+}
 func (s *Store) persistLocked() error {
 	if s.path == "" {
 		return nil

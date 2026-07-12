@@ -30,13 +30,13 @@ func configFields() []pluginapi.ConfigField {
 		{Name: "cpamp_admin_key", Type: pluginapi.ConfigFieldTypeString, Description: "CPAMP Panel Admin Key(敏感)"},
 		{Name: "webhook_url", Type: pluginapi.ConfigFieldTypeString, Description: "冷却/删除事件 Webhook URL(可选)"},
 		{Name: "patrol_enabled", Type: pluginapi.ConfigFieldTypeBoolean, Description: "启用定时巡查(默认关闭)"},
-		{Name: "patrol_interval", Type: pluginapi.ConfigFieldTypeNumber, Description: "巡查周期(秒,默认3600)"},
+		{Name: "patrol_interval", Type: pluginapi.ConfigFieldTypeNumber, Description: "巡查周期(秒,默认3600=60分钟；UI 以分钟编辑)"},
 		{Name: "patrol_timeout", Type: pluginapi.ConfigFieldTypeNumber, Description: "单个凭证探测超时(秒,默认15)"},
 		{Name: "patrol_batch_size", Type: pluginapi.ConfigFieldTypeNumber, Description: "每轮巡查上限(0=不限)"},
 		{Name: "patrol_auth_dir", Type: pluginapi.ConfigFieldTypeString, Description: "auth file 所在目录(如 /root/.cli-proxy-api)"},
 		{Name: "patrol_proxy_url", Type: pluginapi.ConfigFieldTypeString, Description: "巡查探测使用的代理(可选,如 socks5://host:port)"},
 		{Name: "patrol_concurrency", Type: pluginapi.ConfigFieldTypeNumber, Description: "巡查并发线程数(默认8)"},
-		{Name: "patrol_model", Type: pluginapi.ConfigFieldTypeString, Description: "巡查主探测模型(默认 grok-4.5-build-free)"},
+		{Name: "patrol_model", Type: pluginapi.ConfigFieldTypeString, Description: "巡查主探测模型(默认 grok-4.5)"},
 		{Name: "patrol_auto_model_switch", Type: pluginapi.ConfigFieldTypeBoolean, Description: "402 时自动拉取凭证 /models 并切换备用模型再测(默认关；关则仅用 patrol_model，仍 402 则冷却禁用)"},
 	}
 }
@@ -139,7 +139,7 @@ func applyConfigMap(cfg *xaiquota.Config, m map[string]any) {
 	if v, ok := asFloat(m["patrol_timeout"]); ok && v > 0 {
 		cfg.PatrolTimeout = v
 	}
-	if v, ok := asFloat(m["patrol_batch_size"]); ok && v > 0 {
+	if v, ok := asFloat(m["patrol_batch_size"]); ok && v >= 0 {
 		cfg.PatrolBatchSize = int(v)
 	}
 	if v, ok := asString(m["patrol_auth_dir"]); ok {

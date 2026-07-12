@@ -541,7 +541,11 @@ func stateResponse(req managementRequest) ([]byte, error) {
 	}
 
 	g.SyncInventoryUsage(successSum, failedSum, 0)
-	metrics := g.MetricsWithInventory(xaiTotal, xaiEnabled, xaiDisabled)
+	liveAuth := map[string]bool{}
+	for k := range byIndex {
+		liveAuth[k] = true
+	}
+	metrics := g.MetricsWithInventoryLive(xaiTotal, xaiEnabled, xaiDisabled, liveAuth)
 	metrics.EstimatePerSuccess = 0
 
 	return jsonResponse(map[string]any{
@@ -570,6 +574,8 @@ func stateResponse(req managementRequest) ([]byte, error) {
 			"patrol_batch_size":            cfg.PatrolBatchSize,
 			"patrol_model":                cfg.PatrolModel,
 			"patrol_auto_model_switch":   cfg.PatrolAutoModelSwitch,
+			"patrol_proxy_url":           cfg.PatrolProxyURL,
+			"patrol_proxy_set":           cfg.PatrolProxyURL != "",
 		},
 		"accounts": outList,
 		"summary": map[string]any{
@@ -588,8 +594,10 @@ func stateResponse(req managementRequest) ([]byte, error) {
 			"hot_hidden":       hotHidden,
 			"focus_hot_cap":    focusHotCap,
 		},
-		"metrics":        metrics,
-		"delete_history": g.ListDeletes(20),
+		"metrics":         metrics,
+		"delete_history":  g.ListDeletes(50),
+		"action_history":  g.ListActions(80),
+		"patrol":          g.PatrolStatus(),
 	})
 }
 
@@ -625,7 +633,7 @@ func exportResponse() ([]byte, error) {
 	g := guard()
 	cfg := g.Config()
 	xaiTotal, xaiEnabled, xaiDisabled, _, _ := countXAIInventory()
-	metrics := g.MetricsWithInventory(xaiTotal, xaiEnabled, xaiDisabled)
+	metrics := g.MetricsWithInventoryLive(xaiTotal, xaiEnabled, xaiDisabled, nil)
 	return jsonResponse(map[string]any{
 		"exported_at_ms": time.Now().UnixMilli(),
 		"plugin":         pluginID,
@@ -635,6 +643,8 @@ func exportResponse() ([]byte, error) {
 		"accounts":       g.Snapshot(),
 		"usage_by_auth":  g.UsageByAuthMap(),
 		"delete_history": g.ListDeletes(100),
+		"action_history": g.ListActions(100),
+		"patrol":         g.PatrolStatus(),
 		"cpamp_url":      cfg.CPAMPURL,
 	})
 }
@@ -675,6 +685,8 @@ func configResponse() ([]byte, error) {
 		"patrol_batch_size":      cfg.PatrolBatchSize,
 		"patrol_model":          cfg.PatrolModel,
 		"patrol_auto_model_switch": cfg.PatrolAutoModelSwitch,
+		"patrol_proxy_url":      cfg.PatrolProxyURL,
+		"patrol_proxy_set":      cfg.PatrolProxyURL != "",
 	})
 }
 
@@ -783,7 +795,8 @@ func patrolConfigResponse(req managementRequest) ([]byte, error) {
 		PatrolProxyURL  *string `json:"patrol_proxy_url"`
 		PatrolConcurrency *float64 `json:"patrol_concurrency"`
 		PatrolBatchSize *float64 `json:"patrol_batch_size"`
-		PatrolModel     *string  `json:"patrol_model"`
+		PatrolModel           *string  `json:"patrol_model"`
+		PatrolAutoModelSwitch *bool    `json:"patrol_auto_model_switch"`
 	}
 	_ = json.Unmarshal(req.Body, &body)
 	cfg := guard().Config()
@@ -815,33 +828,39 @@ func patrolConfigResponse(req managementRequest) ([]byte, error) {
 		}
 		cfg.PatrolModel = m
 	}
-	// Persist full patrol settings into CPA plugin config (GET+merge+PUT).
-	patch := map[string]any{
-		"patrol_enabled":     cfg.PatrolEnabled,
-		"patrol_interval":    cfg.PatrolInterval,
-		"patrol_timeout":     cfg.PatrolTimeout,
-		"patrol_auth_dir":    cfg.PatrolAuthDir,
-		"patrol_concurrency": cfg.PatrolConcurrency,
-		"patrol_batch_size":  cfg.PatrolBatchSize,
-		"patrol_model":       cfg.PatrolModel,
+	if body.PatrolAutoModelSwitch != nil {
+		cfg.PatrolAutoModelSwitch = *body.PatrolAutoModelSwitch
 	}
-	if cfg.PatrolProxyURL != "" {
-		patch["patrol_proxy_url"] = cfg.PatrolProxyURL
+	// Persist full patrol settings into CPA plugin config (GET+merge+PUT).
+	// Always write patrol_proxy_url (including empty) so clear/save is real.
+	patch := map[string]any{
+		"patrol_enabled":           cfg.PatrolEnabled,
+		"patrol_interval":          cfg.PatrolInterval,
+		"patrol_timeout":           cfg.PatrolTimeout,
+		"patrol_auth_dir":          cfg.PatrolAuthDir,
+		"patrol_concurrency":       cfg.PatrolConcurrency,
+		"patrol_batch_size":        cfg.PatrolBatchSize,
+		"patrol_model":             cfg.PatrolModel,
+		"patrol_auto_model_switch": cfg.PatrolAutoModelSwitch,
+		"patrol_proxy_url":         cfg.PatrolProxyURL,
 	}
 	if err := writePluginConfig(cfg, patch); err != nil {
 		return jsonResponse(map[string]any{"ok": false, "error": err.Error()})
 	}
 	guard().ApplyConfig(cfg)
 	return jsonResponse(map[string]any{
-		"ok":                 true,
-		"persisted":          true,
-		"patrol_enabled":     cfg.PatrolEnabled,
-		"patrol_interval":    cfg.PatrolInterval,
-		"patrol_timeout":     cfg.PatrolTimeout,
-		"patrol_auth_dir":    cfg.PatrolAuthDir,
-		"patrol_concurrency": cfg.PatrolConcurrency,
-		"patrol_batch_size":  cfg.PatrolBatchSize,
-		"patrol_model":       cfg.PatrolModel,
+		"ok":                       true,
+		"persisted":                true,
+		"patrol_enabled":           cfg.PatrolEnabled,
+		"patrol_interval":          cfg.PatrolInterval,
+		"patrol_timeout":           cfg.PatrolTimeout,
+		"patrol_auth_dir":          cfg.PatrolAuthDir,
+		"patrol_concurrency":       cfg.PatrolConcurrency,
+		"patrol_batch_size":        cfg.PatrolBatchSize,
+		"patrol_model":             cfg.PatrolModel,
+		"patrol_auto_model_switch": cfg.PatrolAutoModelSwitch,
+		"patrol_proxy_url":         cfg.PatrolProxyURL,
+		"patrol_proxy_set":         cfg.PatrolProxyURL != "",
 	})
 }
 
@@ -954,7 +973,7 @@ th{color:var(--muted);font-weight:600}
 .muted{color:var(--muted)}
 .err{color:var(--err)}
 .acc-toolbar{display:flex;gap:.45rem;flex-wrap:wrap;align-items:center;margin:.35rem 0 .7rem;padding:.55rem .65rem;background:linear-gradient(180deg,#f8fafc,#fff);border:1px solid var(--border);border-radius:12px}
-.acc-table-wrap{overflow:auto;border:1px solid var(--border);border-radius:12px;background:#fff}
+.acc-table-wrap{overflow:auto;height:min(52vh,480px);max-height:min(52vh,480px);border:1px solid var(--border);border-radius:12px;background:var(--card,#fff)}
 table.acc{width:100%;border-collapse:separate;border-spacing:0;font-size:.86rem}
 table.acc thead th{position:sticky;top:0;z-index:1;background:#f8fafc;color:var(--muted);font-weight:700;font-size:.75rem;letter-spacing:.02em;text-align:left;padding:.65rem .55rem;border-bottom:1px solid var(--border);white-space:nowrap}
 table.acc tbody td{padding:.7rem .55rem;border-bottom:1px solid #eef2f7;vertical-align:top}
@@ -982,14 +1001,14 @@ table.acc tbody tr.row-auto{background:#f0fdfa}
 code{background:#f1f5f9;padding:.1rem .3rem;border-radius:4px;font-size:.82rem}
 </style></head><body><div class="wrap">
 <h1>xAI Quota Guard <span class="badge" id="enBadge">…</span> <span class="badge muted" id="verBadge">v0</span></h1>
-<div class="sub">仅处理 xAI：429 免费额度用尽后冷却约 24h（滚动窗口）到期才自动恢复 · 未到点不会启用 · 403 permission-denied 直接删除 · 用户手动禁用永不自动启用</div>
+<div class="sub">仅 xAI：429 免费额度冷却 · 402 积分冷却不删 · 区域/模型不可用不删 · 真 403 端点拒绝/401 才删 · 用户手动禁用永不自动启用</div>
 <div class="grid">
   <div class="card">
     <div class="row" style="justify-content:space-between">
       <div class="row">
         <button class="primary on" id="btnToggle" onclick="togglePlugin()" title="切换插件总开关"><span class="status-dot on" id="enDot"></span><span id="enBtnText">加载中…</span></button>
         <button onclick="runTick()">立即扫描恢复</button>
-        <button onclick="loadState()">刷新</button>
+        <button onclick="forceReloadState()">刷新</button>
         <button onclick="runBackfill()" id="btnBackfill" title="用 CPAMP analytics 回补日历今日真实 token">CPAMP 回补</button>
         <button onclick="runHealth()" id="btnHealth">自检</button>
         <button onclick="exportUsage()">导出JSON</button>
@@ -1009,10 +1028,10 @@ code{background:#f1f5f9;padding:.1rem .3rem;border-radius:4px;font-size:.82rem}
       <div class="stats-group">
         <h3>xAI 额度（仅 provider=xai）</h3>
         <div class="stats">
-          <div class="stat accent"><span class="lbl">总额度(估)</span><b id="sQuotaTotal">0</b><div class="sub" id="sQuotaKnown">xAI 免费池</div></div>
+          <div class="stat accent"><span class="lbl">日额度池(估)</span><b id="sQuotaTotal">0</b><div class="sub" id="sQuotaKnown">启用凭证×1M · 24h滚动</div></div>
           <div class="stat accent"><span class="lbl">已用 · 日历今日</span><b id="sUsedToday">0</b><div class="sub" id="sDayKey">—</div></div>
-          <div class="stat accent"><span class="lbl">滚动池 used/limit</span><b id="sRolling">0</b><div class="sub" id="sRollingSub">free-usage 已知账号</div></div>
-          <div class="stat accent"><span class="lbl">已用 · 总计</span><b id="sUsedTotal">0</b><div class="sub" id="sUsedNote">事件累计</div>
+          <div class="stat accent"><span class="lbl">滚动快照 used/limit</span><b id="sRolling">0</b><div class="sub" id="sRollingSub">存活凭证 free-usage 观测</div></div>
+          <div class="stat accent"><span class="lbl">已用 · 累计(真实)</span><b id="sUsedTotal">0</b><div class="sub" id="sUsedNote">usage token 累计</div>
             <div class="bar" title="已用/总额度"><i id="sUsedBar"></i></div>
           </div>
         </div>
@@ -1038,8 +1057,8 @@ code{background:#f1f5f9;padding:.1rem .3rem;border-radius:4px;font-size:.82rem}
       <label style="display:flex;align-items:center;gap:.3rem;font-size:.85rem">
         <input type="checkbox" id="cfgPatrolEn" style="width:auto"> 启用定时巡查
       </label>
-      <label style="font-size:.85rem">周期(秒)
-        <input id="cfgPatrolInt" type="number" min="60" step="60" style="width:80px" placeholder="3600">
+      <label style="font-size:.85rem">周期(分钟)
+        <input id="cfgPatrolInt" type="number" min="1" step="1" style="width:80px" placeholder="60" title="保存时换算为秒">
       </label>
       <label style="font-size:.85rem">超时(秒)
         <input id="cfgPatrolTO" type="number" min="1" step="1" style="width:60px" placeholder="15">
@@ -1047,7 +1066,7 @@ code{background:#f1f5f9;padding:.1rem .3rem;border-radius:4px;font-size:.82rem}
       <label style="font-size:.85rem">并发
         <input id="cfgPatrolCon" type="number" min="1" step="1" style="width:60px" placeholder="8">
       </label>
-      <label style="font-size:.85rem">每轮上限(0=不限)
+      <label style="font-size:.85rem">每轮上限(0=不限·默认)
         <input id="cfgPatrolBatch" type="number" min="0" step="1" style="width:60px" placeholder="0">
       </label>
       <button class="primary" onclick="savePatrolConfig()">保存配置</button>
@@ -1061,22 +1080,22 @@ code{background:#f1f5f9;padding:.1rem .3rem;border-radius:4px;font-size:.82rem}
       </label>
     </div>
     <div class="row" style="gap:.6rem;flex-wrap:wrap;margin-top:.4rem;align-items:flex-end">
-      <label style="font-size:.85rem;flex:1;min-width:240px">探测模型
-        <select id="cfgPatrolModel" style="width:100%;min-height:2rem">
-          <option value="grok-4.5-build-free">grok-4.5-build-free（推荐·免费档）</option>
+      <label style="font-size:.85rem;flex:1 1 280px;min-width:240px;max-width:420px;box-sizing:border-box">探测模型
+        <select id="cfgPatrolModel" style="width:100%;min-height:2rem;max-width:100%;box-sizing:border-box">
+          <option value="grok-4.5">grok-4.5（默认）</option>
         </select>
       </label>
-      <button type="button" onclick="refreshPatrolModels()" style="white-space:nowrap">刷新模型列表</button>
-      <label style="display:flex;align-items:center;gap:.3rem;font-size:.85rem;white-space:nowrap">
+      <button type="button" id="btnRefreshPatrolModels" onclick="refreshPatrolModels()" style="white-space:nowrap;min-width:7.5rem;flex:0 0 auto">刷新模型列表</button>
+      <label style="display:flex;align-items:center;gap:.3rem;font-size:.85rem;white-space:nowrap;flex:0 0 auto">
         <input type="checkbox" id="cfgPatrolAutoModel" style="width:auto"> 402 自动换模型再测
       </label>
-      <span class="muted" style="font-size:.78rem;max-width:320px" id="patrolModelHint">主模型探测；开启自动换模型时，402 会拉凭证模型列表轮询备用，仍 402 才冷却</span>
     </div>
+    <div class="muted" style="margin-top:.35rem;font-size:.78rem;min-height:1.2em;line-height:1.35;word-break:break-word" id="patrolModelHint">主模型探测；开启自动换模型时，402 会拉凭证模型列表轮询备用，仍 402 才冷却</div>
     <div class="muted" style="margin-top:.4rem;font-size:.8rem" id="patrolCfgHint">配置加载中…</div>
     <hr style="border:none;border-top:1px solid var(--border);margin:.7rem 0">
     <div class="row" style="gap:.6rem;flex-wrap:wrap;align-items:center">
-      <button id="patrolBtn" class="warn" onclick="patrolStart()">全量巡查</button>
-      <button id="patrolSpendBtn" class="primary" onclick="patrolSpendingStart()" title="仅复查 plugin_auto spending_limit 冷却号">仅复查冷却号</button>
+      <button id="patrolBtn" class="warn" onclick="patrolStart()" title="只扫当前启用中的 xAI 凭证（跳过所有已禁用）">全量巡查</button>
+      <button id="patrolSpendBtn" class="primary" onclick="patrolSpendingStart()" title="只扫已禁用的 plugin_auto 冷却号（不含启用中凭证）">仅复查冷却号</button>
       <button id="patrolStopBtn" class="off" onclick="patrolStop()" style="display:none">停止巡查</button>
       <span id="patrolStatus" class="muted" style="font-size:.82rem">空闲</span>
     </div>
@@ -1084,23 +1103,16 @@ code{background:#f1f5f9;padding:.1rem .3rem;border-radius:4px;font-size:.82rem}
       <div style="background:#e2e8f0;border-radius:6px;height:.5rem;overflow:hidden">
         <div id="patrolBar" style="background:var(--accent);height:100%;width:0%;transition:width .3s"></div>
       </div>
-      <div class="row" style="margin-top:.4rem;gap:1rem;font-size:.8rem">
+      <div id="patrolSummaryLine" class="row" style="margin-top:.4rem;gap:.55rem;font-size:.8rem;flex-wrap:wrap;align-items:center">
         <span>已探测: <b id="patrolProbed">0</b></span>
         <span style="color:var(--ok)">存活: <b id="patrolAlive">0</b></span>
-        <span style="color:var(--err)">已删除: <b id="patrolDeleted">0</b></span>
-        <span style="color:var(--warn)">错误: <b id="patrolErrors">0</b></span>
+        <span style="color:var(--err)">删除: <b id="patrolDeleted">0</b></span>
+        <span style="color:var(--accent)">冷却: <b id="patrolCD">0</b></span>
+        <span class="muted">恢复: <b id="patrolReen">0</b></span>
+        <span style="color:var(--warn)">异常: <b id="patrolErrors">0</b></span>
+        <span class="muted" id="patrolErrBreak" style="font-size:.76rem"></span>
       </div>
-    </div>
-    <div id="patrolDelHist" style="margin-top:.7rem">
-      <div style="font-weight:600;margin-bottom:.3rem;font-size:.82rem;color:var(--muted)">删除历史（最近 20 条）</div>
-      <div id="patrolDelBox" style="height:180px;overflow-y:auto;font-size:.78rem;border:1px solid var(--border);border-radius:8px;background:var(--card,#fff)">
-        <table style="width:100%;border-collapse:collapse;table-layout:fixed">
-          <thead><tr style="text-align:left;color:var(--muted);border-bottom:1px solid var(--border);position:sticky;top:0;background:var(--card,#fff)">
-            <th style="padding:.25rem;width:28%">时间</th><th style="width:22%">账号</th><th style="width:10%">来源</th><th>原因</th>
-          </tr></thead>
-          <tbody id="patrolDelBody"><tr><td colspan="4" class="muted" style="padding:.5rem">加载中…</td></tr></tbody>
-        </table>
-      </div>
+      <div id="patrolHttpStats" class="row" style="margin-top:.35rem;gap:.35rem;flex-wrap:wrap;font-size:.76rem;min-height:1.4em"></div>
     </div>
     <div id="patrolLog" style="margin-top:.7rem;display:none">
       <div style="font-weight:600;margin-bottom:.3rem;font-size:.82rem;color:var(--muted)">巡查探测日志</div>
@@ -1114,10 +1126,29 @@ code{background:#f1f5f9;padding:.1rem .3rem;border-radius:4px;font-size:.82rem}
       </div>
     </div>
   </div>
+  <div class="card" id="actionLogCard">
+    <div class="row" style="justify-content:space-between;gap:.5rem;margin-bottom:.35rem">
+      <div style="font-weight:700">处理日志</div>
+      <div class="muted" style="font-size:.78rem">删除历史 + 被动冷却/恢复 · 最近 50 条 · 与本轮巡查探测日志分开</div>
+    </div>
+    <div id="actionLogBox" style="height:280px;overflow-y:auto;font-size:.78rem;border:1px solid var(--border);border-radius:8px;background:var(--card,#fff)">
+      <table style="width:100%;border-collapse:collapse;table-layout:fixed">
+        <thead><tr style="text-align:left;color:var(--muted);border-bottom:1px solid var(--border);position:sticky;top:0;background:var(--card,#fff)">
+          <th style="padding:.25rem;width:20%">时间</th>
+          <th style="width:12%">动作</th>
+          <th style="width:10%">来源</th>
+          <th style="width:22%">账号</th>
+          <th style="width:8%">码</th>
+          <th>说明</th>
+        </tr></thead>
+        <tbody id="actionLogBody"><tr><td colspan="6" class="muted" style="padding:.5rem">加载中…</td></tr></tbody>
+      </table>
+    </div>
+  </div>
   <div class="card">
     <div class="row" style="justify-content:space-between;gap:.5rem;margin-bottom:.35rem">
       <div style="font-weight:700">账号状态</div>
-      <div class="muted" style="font-size:.78rem">与上方「xAI 凭证」同一 inventory · 默认关注异常/有用量</div>
+      <div class="muted" style="font-size:.78rem">固定高度·固定每页(≤50) · 与上方「xAI 凭证」同一 inventory · 默认关注异常/有用量</div>
     </div>
     <div class="acc-toolbar">
       <select id="accFilter" onchange="ACC_PAGE=1; onAccFilterChange()" style="min-width:150px">
@@ -1133,11 +1164,10 @@ code{background:#f1f5f9;padding:.1rem .3rem;border-radius:4px;font-size:.82rem}
         <option value="active">活跃/其他</option>
       </select>
       <input id="accSearch" placeholder="搜账号 / 文件名 / auth_index" oninput="onAccSearch()" style="flex:1;min-width:180px">
-      <select id="accPageSize" onchange="ACC_PAGE=1; renderAccountTable()" style="width:110px" title="每页条数">
+      <select id="accPageSize" onchange="ACC_PAGE=1; renderAccountTable()" style="width:110px" title="固定每页条数（不分页无限增长）">
+        <option value="20" selected>20/页</option>
         <option value="30">30/页</option>
-        <option value="50" selected>50/页</option>
-        <option value="100">100/页</option>
-        <option value="200">200/页</option>
+        <option value="50">50/页</option>
       </select>
       <button type="button" onclick="ACC_PAGE=Math.max(1,ACC_PAGE-1); renderAccountTable()">上一页</button>
       <button type="button" onclick="ACC_PAGE=ACC_PAGE+1; renderAccountTable()">下一页</button>
@@ -1271,6 +1301,10 @@ async function api(path, opts){
 let LAST_STATE = null;
 let LAST_FETCH_AT = 0;
 let LAST_TABLE_FP = "";
+let PATROL_FORM_DIRTY = false;
+let PATROL_MODELS_LOADING = false;
+let PATROL_CFG_APPLIED = false;
+
 function fmtToken(n, withUnit){
   n = Number(n||0);
   if(!isFinite(n)) n = 0;
@@ -1371,7 +1405,9 @@ function humanReason(a){
   if(code === "subscription:free-usage-exhausted" || /free usage|free-usage/i.test(raw+errText+signal)){
     return "免费额度用尽（滚动 24 小时窗口）";
   }
-  if(/permission-denied|permission_denied/i.test(raw+signal)) return "权限拒绝（将删除账号）";
+  if(/not available in your region|unavailable in your region/i.test(raw+signal+errText)) return "区域/模型不可用（IP·不删号）";
+  if(/permission-denied|permission_denied/i.test(raw+signal) && /chat endpoint is denied|correct credentials/i.test(raw+errText+signal)) return "权限拒绝（将删除账号）";
+  if(/permission-denied|permission_denied/i.test(raw+signal)) return "权限拒绝（请核对是否区域问题）";
   if(/invalid or expired credentials|no auth context|invalid_grant|refresh token has been revoked/i.test(raw+signal)) return "凭证失效/已吊销（将删除账号）";
   if(/spending-limit|run out of credits|personal-team-blocked|spending_limit/i.test(raw+signal)) return "积分/订阅耗尽（程序冷却，巡查恢复后启用）";
   if(code) return "xAI 限制: " + code;
@@ -1381,13 +1417,21 @@ function humanReason(a){
   return "—";
 }
 function patrolActionLabel(a){
-  if(a==="deleted") return "已删除";
-  if(a==="alive") return "存活";
-  if(a==="error") return "错误";
-  if(a==="cooldown") return "冷却禁用";
-  if(a==="cooldown_skip") return "跳过";
-  if(a==="reenabled") return "已恢复启用";
-  return a||"—";
+  var m = {
+    deleted:"已删除", alive:"存活", error:"错误", cooldown:"冷却禁用", cooldown_skip:"跳过", reenabled:"已恢复启用",
+    net_timeout:"网络超时", net_canceled:"请求取消", net_dns:"DNS失败", net_tls:"TLS失败", net_connect:"连接失败", net_error:"网络异常",
+    probe_http_4xx:"探测4xx", probe_http_5xx:"探测5xx", probe_unprocessable:"422体错误", region_block:"区域/模型不可用", cli_version:"CLI版本被拒"
+  };
+  return m[a] || a || "—";
+}
+function patrolHttpLabel(code){
+  var c = String(code);
+  var labels = {
+    "200":"200存活","429":"429额度","402":"402付费","403":"403权限","401":"401凭证","426":"426CLI",
+    "404":"404","405":"405","422":"422","500":"500","502":"502","503":"503","504":"504",
+    "0":"网络","-1":"超时","-2":"取消","-3":"DNS","-4":"TLS","-5":"连接"
+  };
+  return labels[c] || ("HTTP "+c);
 }
 function stateTag(st, src, health){
   if(health==="due") return '<span class="tag due">已到点待恢复</span>';
@@ -1437,8 +1481,9 @@ function paintStatusBar(d){
   if(qk){
     const known=m.quota_known_accounts||0, total=xaiN, rest=m.unobserved_accounts!=null?m.unobserved_accounts:Math.max(0,total-known);
     const defL = m.default_limit_per_acct || 1000000;
-    const mode = m.include_unobserved_est ? ("全量≈凭证×"+fmtToken(defL)) : "仅已知 rolling";
-    qk.textContent = mode + " · 已知 " + known + " · 未观测 " + rest;
+    const en = m.xai_enabled||0;
+    const mode = m.include_unobserved_est ? ("启用×"+fmtToken(defL)+"≈日池") : "仅存活快照 limit 合计";
+    qk.textContent = mode + " · 启用 " + en + " · 快照 " + known + " · 未观测启用≈" + rest;
   }
   setToken("sUsedToday", (m.used_today_display != null ? m.used_today_display : (m.used_today||0)));
   const roll = document.getElementById("sRolling");
@@ -1448,7 +1493,7 @@ function paintStatusBar(d){
     const over = rl>0 && ru>rl; roll.innerHTML = fmtTokenHTML(ru) + '<span class="muted" style="font-size:.75rem"> / </span>' + fmtTokenHTML(rl) + (over?' <span class="err" style="font-size:.75rem">超限</span>':'');
   }
   const rs = document.getElementById("sRollingSub");
-  if(rs){ rs.textContent = "已知 " + (m.rolling_accounts||m.quota_known_accounts||0) + " 账号 · free-usage 滚动窗"; }
+  if(rs){ rs.textContent = "存活快照 " + (m.rolling_accounts||m.quota_known_accounts||0) + " · 非已用总计 · 禁用不计入"; }
   let alertEl = document.getElementById("detailAlert");
   if(!alertEl){
     const tip = document.getElementById("recoverTip");
@@ -1484,16 +1529,17 @@ function paintStatusBar(d){
   const usedTotal = (m.used_total_display != null ? m.used_total_display : (m.used_total||0));
   setToken("sUsedTotal", usedTotal);
   const un = document.getElementById("sUsedNote");
-  if(un) un.textContent = "真实token " + fmtToken(m.used_total||0) + " · actual " + fmtToken(m.quota_used_known||0) + " · 今日请求 " + (m.requests_today||0);
+  if(un) un.textContent = "usage累计 " + fmtToken(m.used_total||0) + " · 快照actual " + fmtToken(m.quota_used_known||0) + "(不计入已用) · 今日请求 " + (m.requests_today||0);
   const bar = document.getElementById("sUsedBar");
   if(bar){
     const total = Number(m.quota_total_est||0);
-    const used = Number(usedTotal||0);
-    let pct = total > 0 ? (used / total * 100) : 0;
+    // bar = calendar today / daily pool (not lifetime)
+    const usedDay = Number(m.used_today_display != null ? m.used_today_display : (m.used_today||0));
+    let pct = total > 0 ? (usedDay / total * 100) : 0;
     if(pct < 0) pct = 0;
     if(pct > 100) pct = 100;
     bar.style.width = pct.toFixed(1) + "%";
-    bar.parentElement.title = "已用/总额度 " + pct.toFixed(1) + "%";
+    bar.parentElement.title = "今日已用/日额度池 " + pct.toFixed(1) + "%";
   }
   const nowLabel = document.getElementById("nowLabel");
   if(nowLabel){
@@ -1550,13 +1596,26 @@ function accountHealth(a, nowMs){
 function isFocusHealth(h){
   return h==="due" || h==="auto" || h==="manual" || h==="over" || h==="hot" || h==="cpa_disabled";
 }
+function dedupeAccounts(list){
+  var seen = {};
+  var out = [];
+  (list||[]).forEach(function(a){
+    var k = String((a&&a.auth_index)||"");
+    if(!k){ out.push(a); return; }
+    if(seen[k]) return;
+    seen[k] = true;
+    out.push(a);
+  });
+  return out;
+}
 function renderAccountTable(){
   const d = LAST_STATE;
   if(!d) return;
-  const list = sortAccounts(d.accounts || []);
+  const list = sortAccounts(dedupeAccounts(d.accounts || []));
+  d.accounts = list; // normalize once: no duplicate auth_index growth
   const filter = (document.getElementById("accFilter")||{}).value || "focus";
   const q = ((document.getElementById("accSearch")||{}).value || "").toLowerCase().trim();
-  const pageSize = Math.max(10, parseInt(((document.getElementById("accPageSize")||{}).value || "50"), 10) || 50);
+  const pageSize = Math.min(50, Math.max(10, parseInt(((document.getElementById("accPageSize")||{}).value || "20"), 10) || 20));
   const nowMs = Date.now();
   const filtered = list.filter(function(a){
     const h = accountHealth(a, nowMs);
@@ -1589,6 +1648,14 @@ function renderAccountTable(){
   }
   const body = document.getElementById("accBody");
   if(!body) return;
+  const pageFp = filter+"|"+q+"|"+pageSize+"|"+ACC_PAGE+"|"+pageItems.map(function(a){
+    return [a.auth_index,a.state,a.disable_source,a.recover_at_ms,a.used_today,a.reason,a.signal,a.health,a.cpa_disabled].join("~");
+  }).join("|");
+  if(pageFp === (window._ACC_PAGE_FP||"") && body.querySelector("tr[data-auth]")){
+    // same page data: only countdown spans update via paintStatusBar path; skip full rewrite
+    return;
+  }
+  window._ACC_PAGE_FP = pageFp;
   if(!pageItems.length){
     body.innerHTML = '<tr><td colspan="5" class="muted">无匹配账号（可切换「全部账号」或清空搜索）</td></tr>';
     return;
@@ -1676,6 +1743,14 @@ function clearLoadingUI(errMsg){
     meta.textContent = errMsg ? ("加载失败: " + errMsg) : "—";
   }
 }
+function forceReloadState(){
+  if(PATROL_FORM_DIRTY){
+    if(!confirm("巡查配置有未保存修改。确定用服务端配置覆盖表单（含代理）？")) return;
+    PATROL_FORM_DIRTY = false;
+  }
+  window._PATROL_FORCE_FORM = true;
+  loadState();
+}
 async function loadState(){
   if(LOAD_STATE_INFLIGHT) return;
   LOAD_STATE_INFLIGHT = true;
@@ -1702,7 +1777,9 @@ async function loadState(){
     const vb = document.getElementById("verBadge");
     if(vb) vb.textContent = "v" + (d.version || "?");
     paintStatusBar(d);
-    renderDelHistFromState(d.delete_history);
+    /* del hist merged */
+    renderActionLog(d.delete_history, d.action_history);
+    if(d.patrol){ try{ paintPatrol(d.patrol, d); }catch(e){} }
     const s = d.summary || {};
     const tip = document.getElementById("recoverTip");
     if(tip && s.hot_hidden > 0){
@@ -1722,25 +1799,48 @@ async function loadState(){
         " · unobs_est=" + !!cfg.include_unobserved_quota_est +
         (s.hot_hidden>0 ? (" · focus热账号截断 "+s.hot_shown+"/"+s.hot_total) : "");
     }
-    // patrol config display
+    // patrol form: fill ONLY once (or explicit force). Never periodic rewrite of proxy/model.
+    // Bugfix: condition was (!dirty || !applied) which is true whenever dirty=false → 15s overwrite.
     var ph = document.getElementById("patrolCfgHint");
     if(ph){
       var pen = cfg.patrol_enabled;
-      document.getElementById("cfgPatrolEn").checked = !!pen;
-      document.getElementById("cfgPatrolInt").value = cfg.patrol_interval || 3600;
-      document.getElementById("cfgPatrolTO").value = cfg.patrol_timeout || 15;
-      document.getElementById("cfgPatrolDir").value = cfg.patrol_auth_dir || "";
-      document.getElementById("cfgPatrolCon").value = cfg.patrol_concurrency || 8;
-      document.getElementById("cfgPatrolBatch").value = cfg.patrol_batch_size || 0;
-      var pm = cfg.patrol_model || "grok-4.5-build-free";
-      ensurePatrolModelOption(pm);
-      document.getElementById("cfgPatrolModel").value = pm;
-      document.getElementById("cfgPatrolAutoModel").checked = !!cfg.patrol_auto_model_switch;
-      try{ refreshPatrolModels(true); }catch(e){}
-      document.getElementById("cfgPatrolProxy").value = ""; // sensitive, not echoed
-      ph.textContent = pen
-        ?("已启用 · 周期"+(cfg.patrol_interval||"?")+"s · 并发"+(cfg.patrol_concurrency||"?")+" · 模型"+(cfg.patrol_model||"?")+" · 自动换模"+(cfg.patrol_auto_model_switch?"开":"关")+" · 目录"+(cfg.patrol_auth_dir||"?"))
-        :("未启用 · 模型"+(cfg.patrol_model||"grok-4.5-build-free")+" · 可勾选后点保存配置");
+      var forceForm = !!(window._PATROL_FORCE_FORM);
+      window._PATROL_FORCE_FORM = false;
+      if(!PATROL_CFG_APPLIED || (forceForm && !PATROL_FORM_DIRTY)){
+        document.getElementById("cfgPatrolEn").checked = !!pen;
+        document.getElementById("cfgPatrolInt").value = Math.max(1, Math.round((Number(cfg.patrol_interval)||3600)/60));
+        document.getElementById("cfgPatrolTO").value = cfg.patrol_timeout || 15;
+        document.getElementById("cfgPatrolDir").value = cfg.patrol_auth_dir || "";
+        document.getElementById("cfgPatrolCon").value = cfg.patrol_concurrency || 8;
+        document.getElementById("cfgPatrolBatch").value = (cfg.patrol_batch_size != null ? cfg.patrol_batch_size : 0);
+        var pm = (window._PATROL_UI_MODEL || cfg.patrol_model || "grok-4.5");
+        // force-reload uses server; normal first fill prefers server unless UI memory exists from same page session
+        if(forceForm){ pm = cfg.patrol_model || "grok-4.5"; }
+        ensurePatrolModelOption(pm);
+        document.getElementById("cfgPatrolModel").value = pm;
+        if(document.getElementById("cfgPatrolModel").value !== pm){ ensurePatrolModelOption(pm); document.getElementById("cfgPatrolModel").value = pm; }
+        window._PATROL_UI_MODEL = pm;
+        document.getElementById("cfgPatrolAutoModel").checked = !!cfg.patrol_auto_model_switch;
+        var px = (forceForm ? (cfg.patrol_proxy_url || "") : (window._PATROL_UI_PROXY != null ? window._PATROL_UI_PROXY : (cfg.patrol_proxy_url || "")));
+        // first apply: prefer server proxy; only use UI memory when forceForm is false AND memory set after user edit — on true first load memory is empty
+        if(!forceForm && !window._PATROL_UI_PROXY_SET){ px = cfg.patrol_proxy_url || ""; }
+        document.getElementById("cfgPatrolProxy").value = px;
+        PATROL_CFG_APPLIED = true;
+        try{ bindPatrolFormDirty(); }catch(e){}
+        // Do NOT auto-call refreshPatrolModels here: rebuilding <select> races with user
+        // edits and snaps model back to default/first option.
+      }
+      var curModel = (document.getElementById("cfgPatrolModel")||{}).value || cfg.patrol_model || "grok-4.5";
+      var curProxy = (document.getElementById("cfgPatrolProxy")||{}).value || "";
+      ph.textContent = (PATROL_FORM_DIRTY?"[未保存] ":"") + ((document.getElementById("cfgPatrolEn")||{}).checked ? "定时巡查开":"定时巡查关")
+        + " · 周期"+(document.getElementById("cfgPatrolInt").value||Math.round((cfg.patrol_interval||3600)/60)||"?")+"分钟"
+        + " · 并发"+(document.getElementById("cfgPatrolCon").value||cfg.patrol_concurrency||"?")
+        + " · 模型"+curModel
+        + " · 自动换模"+((document.getElementById("cfgPatrolAutoModel")||{}).checked?"开":"关")
+        + " · 代理"+(curProxy?"已填":"空")
+        + (cfg.patrol_proxy_set && !curProxy ? "(服务端已配置·输入被本地清空未保存)" : "")
+        + " · 每轮"+(document.getElementById("cfgPatrolBatch").value||"0")
+        + " · 目录"+(document.getElementById("cfgPatrolDir").value||cfg.patrol_auth_dir||"?");
     }
     const list = sortAccounts(d.accounts || []);
     d.accounts = list;
@@ -1803,60 +1903,171 @@ function ensurePatrolModelOption(id){
 }
 async function refreshPatrolModels(silent){
   var hint = document.getElementById("patrolModelHint");
+  var btn = null;
+  try{ btn = document.getElementById("btnRefreshPatrolModels") || document.querySelector('button[onclick="refreshPatrolModels()"]'); }catch(e){}
+  if(PATROL_MODELS_LOADING){
+    if(hint && !silent) hint.textContent = "模型列表加载中，请稍候…";
+    return;
+  }
+  PATROL_MODELS_LOADING = true;
+  if(btn){ btn.disabled = true; btn.textContent = "刷新中…"; }
+  if(hint) hint.textContent = silent ? (hint.textContent||"模型列表加载中…") : "模型列表加载中…";
   try{
-    var r = await api("patrol/models");
-    var models = (r && r.models) || [];
     var sel = document.getElementById("cfgPatrolModel");
-    var cur = sel ? sel.value : "";
-    if(r && r.patrol_model) cur = r.patrol_model;
+    // Capture BEFORE await; re-read AFTER await (user may change during load)
+    var before = sel ? String(sel.value||"").trim() : "";
+    if(window._PATROL_UI_MODEL) before = before || String(window._PATROL_UI_MODEL||"").trim();
+    var r = await api("patrol/models", {timeout_ms: 45000});
+    if(!r || r.ok === false){
+      if(hint) hint.textContent = "模型列表加载失败: "+(r&&r.error?r.error:"unknown");
+      return;
+    }
+    var body = (r.result != null) ? r.result : r;
+    if(body && body.result != null && (body.models == null)) body = body.result;
+    var models = (body && body.models) || [];
+    var after = sel ? String(sel.value||"").trim() : "";
+    // Absolute priority: dirty UI / last user pick / current select / server / default
+    var keep = "";
+    if(PATROL_FORM_DIRTY){
+      keep = after || before || window._PATROL_UI_MODEL || "";
+    } else {
+      keep = after || before || window._PATROL_UI_MODEL || (body && body.patrol_model) || "";
+    }
+    keep = String(keep||"").trim();
+    if(!keep) keep = (body && body.default) || "grok-4.5";
     if(sel){
-      var keep = cur || (r && r.default) || "grok-4.5-build-free";
-      sel.innerHTML = "";
-      (models||[]).forEach(function(m){
+      // Rebuild options with hard cap; keep closed-select width stable (label max-width).
+      var prevFocus = document.activeElement === sel;
+      var MAX_OPTS = 24;
+      var totalAll = (body && body.total != null) ? Number(body.total) : (models||[]).length;
+      if(!totalAll || totalAll < (models||[]).length) totalAll = (models||[]).length;
+      sel.removeAttribute("size");
+      var frag = document.createDocumentFragment();
+      var seen = {};
+      var optCount = 0;
+      function addOpt(m, labelExtra, force){
+        m = String(m||"").trim();
+        if(!m || seen[m]) return false;
+        if(!force && optCount >= MAX_OPTS) return false;
+        seen[m] = true;
+        optCount++;
         var opt = document.createElement("option");
         opt.value = m;
-        opt.textContent = m + (String(m).indexOf("free")>=0 ? " · 免费档推荐" : "");
-        sel.appendChild(opt);
+        // Keep labels short so intrinsic width of closed <select> does not explode
+        var extra = labelExtra || "";
+        opt.textContent = m + extra;
+        frag.appendChild(opt);
+        return true;
+      }
+      // Priority: current → saved → free-tier → rest (cap)
+      addOpt(keep, " · 当前", true);
+      if(body && body.patrol_model) addOpt(body.patrol_model, " · 已保存", true);
+      var rest = [];
+      (models||[]).forEach(function(m){
+        m = String(m||"").trim();
+        if(!m || seen[m]) return;
+        rest.push(m);
       });
-      ensurePatrolModelOption(keep);
+      rest.sort(function(a,b){
+        var af = String(a).indexOf("free")>=0 ? 0 : 1;
+        var bf = String(b).indexOf("free")>=0 ? 0 : 1;
+        if(af !== bf) return af - bf;
+        return String(a).localeCompare(String(b));
+      });
+      for(var ri=0; ri<rest.length; ri++){
+        if(optCount >= MAX_OPTS) break;
+        addOpt(rest[ri], "", false);
+      }
+      // Atomic replace avoids empty-select layout flash
+      sel.innerHTML = "";
+      sel.appendChild(frag);
       sel.value = keep;
-    }
-    if(hint){
-      var src = (r && r.source) || "?";
-      var err = (r && r.error) ? (" · "+r.error) : "";
-      hint.textContent = "列表来源: "+src+err+" · 当前将用于巡查探测";
+      if(sel.value !== keep){
+        var o = document.createElement("option");
+        o.value = keep; o.textContent = keep + " · 当前";
+        sel.insertBefore(o, sel.firstChild);
+        sel.value = keep;
+      }
+      window._PATROL_UI_MODEL = keep;
+      if(prevFocus) try{ sel.focus(); }catch(e){}
+      var shown = sel.options.length;
+      var trunc = totalAll > shown || !!(body && body.truncated);
+      if(hint){
+        var src = (body && body.source) || "?";
+        var err = (body && body.error) ? (" · "+body.error) : "";
+        hint.textContent = "已刷新 · "+src+" · "+shown+"/"+(totalAll||shown)+" 模型"+(trunc?"（已截断）":"")+err+" · 当前: "+keep+(PATROL_FORM_DIRTY?"（未保存）":"");
+      }
+    } else if(hint){
+      var src2 = (body && body.source) || "?";
+      var err2 = (body && body.error) ? (" · "+body.error) : "";
+      var n2 = (models||[]).length;
+      hint.textContent = "已刷新 · 列表来源: "+src2+" · "+n2+" 个模型"+err2+" · 当前选择: "+keep+(PATROL_FORM_DIRTY?"（未保存）":"");
     }
   }catch(e){
     if(hint) hint.textContent = "模型列表加载失败: "+(e&&e.message?e.message:e);
+  }finally{
+    PATROL_MODELS_LOADING = false;
+    if(btn){ btn.disabled = false; btn.textContent = "刷新模型列表"; }
   }
 }
 async function savePatrolConfig(){
   var body = {
     patrol_enabled: document.getElementById("cfgPatrolEn").checked,
-    patrol_interval: Number(document.getElementById("cfgPatrolInt").value)||3600,
+    patrol_interval: Math.max(60, Math.round((Number(document.getElementById("cfgPatrolInt").value)||60)*60)),
     patrol_timeout: Number(document.getElementById("cfgPatrolTO").value)||15,
     patrol_auth_dir: document.getElementById("cfgPatrolDir").value.trim(),
     patrol_proxy_url: document.getElementById("cfgPatrolProxy").value.trim(),
     patrol_concurrency: Number(document.getElementById("cfgPatrolCon").value)||8,
     patrol_batch_size: Number(document.getElementById("cfgPatrolBatch").value)||0,
-    patrol_model: (document.getElementById("cfgPatrolModel").value||"").trim()||"grok-4.5-build-free",
+    patrol_model: (document.getElementById("cfgPatrolModel").value||"").trim()||"grok-4.5",
     patrol_auto_model_switch: document.getElementById("cfgPatrolAutoModel").checked
   };
   var ph = document.getElementById("patrolCfgHint");
   if(ph) ph.textContent = "保存中…";
   try {
-    var r = await api("patrol/config", {method:"POST", body: body});
-    if(!r || !r.ok){
-      if(ph) ph.textContent = "保存失败: " + JSON.stringify(r&&r.error||r);
-      alert("巡查配置保存失败: " + JSON.stringify(r&&r.error||r));
+    var r = await api("patrol/config", {method:"POST", body: body, timeout_ms: 30000});
+    var res = (r && r.result != null) ? r.result : r;
+    var ok = r && r.ok !== false && (!res || res.ok !== false);
+    if(!ok){
+      if(ph) ph.textContent = "保存失败: " + JSON.stringify((res&&res.error)||(r&&r.error)||r);
+      alert("巡查配置保存失败: " + JSON.stringify((res&&res.error)||(r&&r.error)||r));
       return;
     }
-    if(ph) ph.textContent = "已保存 · " + (body.patrol_enabled?"已启用":"未启用") + " · 周期"+body.patrol_interval+"s" + " · 并发"+body.patrol_concurrency + " · 模型"+(body.patrol_model||"");
+    // Apply server echo so form matches persisted values (proxy/model/batch)
+    if(res){
+      if(res.patrol_model){ ensurePatrolModelOption(res.patrol_model); document.getElementById("cfgPatrolModel").value = res.patrol_model; window._PATROL_UI_MODEL = res.patrol_model; }
+      if(res.patrol_proxy_url != null){ document.getElementById("cfgPatrolProxy").value = res.patrol_proxy_url || ""; window._PATROL_UI_PROXY = res.patrol_proxy_url || ""; window._PATROL_UI_PROXY_SET = true; }
+      if(res.patrol_batch_size != null){ document.getElementById("cfgPatrolBatch").value = res.patrol_batch_size; }
+      if(res.patrol_enabled != null){ document.getElementById("cfgPatrolEn").checked = !!res.patrol_enabled; }
+      if(res.patrol_auto_model_switch != null){ document.getElementById("cfgPatrolAutoModel").checked = !!res.patrol_auto_model_switch; }
+    }
+    PATROL_FORM_DIRTY = false;
+    PATROL_CFG_APPLIED = true; // keep form as-is (already echoed from res); loadState will NOT rewrite
+    if(ph) ph.textContent = "已保存 · " + (body.patrol_enabled?"定时开":"定时关") + " · 周期"+Math.round((Number(body.patrol_interval)||0)/60)+"分钟(="+body.patrol_interval+"s)"+"s" + " · 并发"+body.patrol_concurrency + " · 模型"+(body.patrol_model||"") + " · 代理"+(body.patrol_proxy_url?"已设":"无") + " · 每轮"+(body.patrol_batch_size||0) + " · 自动换模"+(body.patrol_auto_model_switch?"开":"关");
+    // refresh accounts/metrics only — form locked by PATROL_CFG_APPLIED
     loadState();
   } catch(e){
     if(ph) ph.textContent = "保存异常: " + (e&&e.message?e.message:e);
     alert("巡查配置保存异常: " + (e&&e.message?e.message:e));
   }
+}
+function markPatrolFormDirty(){
+  PATROL_FORM_DIRTY = true;
+  try{
+    var m = document.getElementById("cfgPatrolModel");
+    if(m && m.value) window._PATROL_UI_MODEL = String(m.value).trim();
+    var px = document.getElementById("cfgPatrolProxy");
+    if(px){ window._PATROL_UI_PROXY = String(px.value||""); window._PATROL_UI_PROXY_SET = true; }
+  }catch(e){}
+}
+function bindPatrolFormDirty(){
+  ["cfgPatrolEn","cfgPatrolInt","cfgPatrolTO","cfgPatrolDir","cfgPatrolCon","cfgPatrolBatch","cfgPatrolModel","cfgPatrolAutoModel","cfgPatrolProxy"].forEach(function(id){
+    var el = document.getElementById(id);
+    if(!el || el._dirtyBound) return;
+    el._dirtyBound = true;
+    el.addEventListener("change", markPatrolFormDirty);
+    el.addEventListener("input", markPatrolFormDirty);
+  });
 }
 function applyEnabledUI(en){
   const badge = document.getElementById("enBadge");
@@ -1908,15 +2119,63 @@ async function runTick(){
 (function init(){
   const k = mgmtKey();
   if(k) document.getElementById("cfgKey").value = k;
+  try{ bindPatrolFormDirty(); }catch(e){}
   loadState();
-  // full sync with server
+  // accounts/metrics sync only — form is not rewritten after first fill
   setInterval(loadState, 15000);
-  // local status bar + countdown every second
   setInterval(function(){ if(LAST_STATE) paintStatusBar(LAST_STATE); }, 1000);
-  // visibility resume
   document.addEventListener("visibilitychange", function(){ if(!document.hidden) loadState(); });
 })();
 // ===== Delete History: ONLY updated by loadState (not paintPatrol / 1s paintStatusBar) =====
+var DEL_HIST_FP = "";
+var PASSIVE_ACT_FP = "";
+function passiveActionLabel(a){
+  switch(String(a||"")){
+    case "cooldown": return "冷却";
+    case "cooldown_extend": return "延长冷却";
+    case "delete": case "deleted": return "删除";
+    case "recover": return "恢复";
+    case "skip_manual": return "手动跳过";
+    case "skip_region": return "区域跳过";
+    case "skip_parse": return "解析跳过";
+    case "reenable": case "reenabled": return "重启用";
+    default: return a||"?";
+  }
+}
+function passiveSourceLabel(s){
+  switch(String(s||"")){
+    case "passive": return "被动";
+    case "tick": return "Tick";
+    case "patrol": return "巡查";
+    default: return s||"—";
+  }
+}
+function renderPassiveActions(items){
+  var tb = document.getElementById("passiveActionBody");
+  if(!tb) return;
+  if(!Array.isArray(items)) items = [];
+  var list = items.slice(0,40);
+  var fp = list.map(function(x){
+    return String(x.time_ms||0)+":"+String(x.action||"")+":"+String(x.auth_index||"")+":"+String(x.reason||"");
+  }).join("|");
+  if(fp === PASSIVE_ACT_FP) return;
+  PASSIVE_ACT_FP = fp;
+  if(!list.length){
+    tb.innerHTML = '<tr><td colspan="6" class="muted" style="padding:.5rem">暂无被动处理记录（触发 429/402 冷却或 401/403 删除后会出现）</td></tr>';
+    return;
+  }
+  tb.innerHTML = list.map(function(x){
+    var color = x.action==="delete" ? "var(--err)" : (x.action==="recover"||x.action==="reenable" ? "var(--ok)" : (String(x.action||"").indexOf("skip")>=0 ? "var(--muted)" : "var(--warn)"));
+    return '<tr style="border-bottom:1px solid #f1f5f9">' +
+      '<td style="padding:.2rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+fmtTime(x.time_ms)+'</td>' +
+      '<td style="font-weight:600;color:'+color+';white-space:nowrap">'+esc(passiveActionLabel(x.action))+'</td>' +
+      '<td style="white-space:nowrap">'+esc(passiveSourceLabel(x.source))+'</td>' +
+      '<td style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(x.account||x.file_name||x.auth_index||"?")+'</td>' +
+      '<td>'+(x.http_code||"-")+'</td>' +
+      '<td style="color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(x.reason||x.signal||"")+'</td>' +
+    '</tr>';
+  }).join("");
+}
 var DEL_HIST_FP = "";
 function renderDelHistFromState(items){
   var dhBody = document.getElementById("patrolDelBody");
@@ -1933,7 +2192,12 @@ function renderDelHistFromState(items){
     return;
   }
   dhBody.innerHTML = list.map(function(x){
-    var src = String(x.reason||"").indexOf("patrol:")>=0 ? "巡查" : "额度";
+    var rs = String(x.reason||"");
+    var src = "额度";
+    if(rs.indexOf("patrol:")>=0) src = "巡查";
+    else if(/region|not available in your/i.test(rs)) src = "区域";
+    else if(/permission-denied|invalid or expired|401|403/i.test(rs) && rs.indexOf("free-usage")<0) src = "死号";
+    else if(/spending-limit|402/i.test(rs)) src = "积分";
     return '<tr style="border-bottom:1px solid #f1f5f9">' +
       '<td style="padding:.2rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+fmtTime(x.deleted_at_ms)+'</td>' +
       '<td style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(x.account||x.file_name||x.auth_index||"?")+'</td>' +
@@ -1942,6 +2206,53 @@ function renderDelHistFromState(items){
     '</tr>';
   }).join("");
 }
+
+function renderActionLog(deletes, actions){
+  var tb = document.getElementById("actionLogBody") || document.getElementById("passiveActionBody");
+  if(!tb) return;
+  if(!Array.isArray(deletes)) deletes = [];
+  if(!Array.isArray(actions)) actions = [];
+  var rows = [];
+  deletes.forEach(function(x){
+    var rs = String(x.reason||"");
+    var src = "被动";
+    if(rs.indexOf("patrol:")>=0) src = "巡查";
+    else if(/region|not available in your/i.test(rs)) src = "区域";
+    else if(/permission-denied|invalid or expired|401|403/i.test(rs) && rs.indexOf("free-usage")<0) src = "死号";
+    else if(/spending-limit|402/i.test(rs)) src = "积分";
+    rows.push({time_ms:x.deleted_at_ms||0, action:"delete", source:src, account:x.account||x.file_name||x.auth_index||"?", http_code:x.http_code||"", reason:x.reason||"", auth_index:x.auth_index||""});
+  });
+  actions.forEach(function(x){
+    rows.push({time_ms:x.time_ms||0, action:x.action||"", source:passiveSourceLabel(x.source), account:x.account||x.file_name||x.auth_index||"?", http_code:x.http_code||"", reason:x.reason||x.signal||"", auth_index:x.auth_index||""});
+  });
+  rows.sort(function(a,b){ return (b.time_ms||0)-(a.time_ms||0); });
+  var seen={}, list=[];
+  rows.forEach(function(r){
+    var k=(r.auth_index||r.account)+":"+r.action+":"+Math.floor((r.time_ms||0)/2000);
+    if(seen[k]) return; seen[k]=1; list.push(r);
+  });
+  list = list.slice(0,50);
+  var fp = list.map(function(x){ return (x.time_ms||0)+":"+(x.action||"")+":"+(x.auth_index||x.account||"")+":"+(x.reason||""); }).join("|");
+  if(fp === (window.ACTION_LOG_FP||"")) return;
+  window.ACTION_LOG_FP = fp;
+  if(!list.length){
+    tb.innerHTML = '<tr><td colspan="6" class="muted" style="padding:.5rem">暂无处理记录（冷却/删除/恢复后会出现）</td></tr>';
+    return;
+  }
+  tb.innerHTML = list.map(function(x){
+    var color = (x.action==="delete"||x.action==="deleted") ? "var(--err)" : ((x.action==="recover"||x.action==="reenable"||x.action==="reenabled") ? "var(--ok)" : (String(x.action||"").indexOf("skip")>=0 ? "var(--muted)" : "var(--warn)"));
+    return '<tr style="border-bottom:1px solid #f1f5f9">' +
+      '<td style="padding:.2rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+fmtTime(x.time_ms)+'</td>' +
+      '<td style="font-weight:600;color:'+color+';white-space:nowrap">'+esc(passiveActionLabel(x.action))+'</td>' +
+      '<td style="white-space:nowrap">'+esc(x.source||"—")+'</td>' +
+      '<td style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(x.account||"?")+'</td>' +
+      '<td>'+(x.http_code||"-")+'</td>' +
+      '<td style="color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(x.reason||"")+'</td>' +
+    '</tr>';
+  }).join("");
+}
+function renderPassiveActions(items){ renderActionLog([], items||[]); }
+function renderDelHistFromState(items){ /* merged into action log */ }
 // ===== Patrol =====
 var PATROL_POLL = null;
 function extractPatrol(r){
@@ -1968,6 +2279,46 @@ function paintPatrol(p, r){
   document.getElementById("patrolAlive").textContent = alive;
   document.getElementById("patrolDeleted").textContent = deleted;
   document.getElementById("patrolErrors").textContent = errors;
+  var elCD = document.getElementById("patrolCD"); if(elCD) elCD.textContent = Number(p.total_cooldown||0);
+  var elRe = document.getElementById("patrolReen"); if(elRe) elRe.textContent = Number(p.total_reenabled||0);
+  // Single-source summary: counters above + HTTP chips only (no second action strip that can drift).
+  var ba = p.by_action || {};
+  var errBreak = document.getElementById("patrolErrBreak");
+  if(errBreak){
+    var eParts = [];
+    var errKeys = ["net_timeout","net_canceled","net_dns","net_tls","net_connect","net_error","region_block","cli_version","probe_unprocessable","probe_http_4xx","probe_http_5xx","error"];
+    errKeys.forEach(function(k){ var n=Number(ba[k]||0); if(n) eParts.push(patrolActionLabel(k)+n); });
+    // any other non-core actions
+    Object.keys(ba).forEach(function(k){
+      if(["alive","deleted","cooldown","cooldown_skip","reenabled"].indexOf(k)>=0) return;
+      if(errKeys.indexOf(k)>=0) return;
+      var n=Number(ba[k]||0); if(n) eParts.push((patrolActionLabel(k)||k)+n);
+    });
+    errBreak.textContent = eParts.length ? ("细分: " + eParts.join(" · ")) : "";
+  }
+  var httpBox = document.getElementById("patrolHttpStats");
+  if(httpBox){
+    var by = p.by_http || {};
+    var order = ["200","429","402","403","401","426","404","405","422","500","502","503","504","0","-1","-2","-3","-4","-5"];
+    var colors = {"200":"var(--ok)","429":"var(--accent)","402":"#a855f7","403":"var(--err)","401":"var(--err)","426":"var(--warn)","404":"var(--muted)","405":"var(--muted)","422":"var(--muted)","500":"var(--warn)","502":"var(--warn)","503":"var(--warn)","504":"var(--warn)","0":"var(--muted)","-1":"var(--warn)","-2":"var(--muted)","-3":"var(--warn)","-4":"var(--warn)","-5":"var(--warn)"};
+    var seen = {}, chips = [];
+    function pushCode(code){
+      if(seen[code]) return;
+      var n = Number(by[code]||0);
+      if(!n) return;
+      seen[code]=true;
+      var col = colors[code] || "var(--muted)";
+      chips.push('<span class="chip" style="border-color:'+col+';color:'+col+'">'+patrolHttpLabel(code)+': <b>'+n+'</b></span>');
+    }
+    order.forEach(pushCode);
+    Object.keys(by).sort(function(a,b){ return Number(b)-Number(a); }).forEach(pushCode);
+    // integrity check: sum(by_http) vs total_probed (helps catch desync)
+    var httpSum = 0; Object.keys(by).forEach(function(k){ httpSum += Number(by[k]||0); });
+    if(probed>0 && httpSum>0 && httpSum !== probed){
+      chips.push('<span class="chip" style="border-color:var(--warn);color:var(--warn)">校验: HTTP合计'+httpSum+'≠探测'+probed+'</span>');
+    }
+    httpBox.innerHTML = chips.length ? chips.join("") : '<span class="muted">HTTP 状态将在探测后显示</span>';
+  }
   var denom = candidates > 0 ? candidates : (probed || 1);
   var pct = Math.min(100, Math.round(probed / denom * 100));
   document.getElementById("patrolBar").style.width = pct + "%";
@@ -1984,7 +2335,9 @@ function paintPatrol(p, r){
     document.getElementById("patrolStopBtn").style.display = "";
   } else {
     var err = p.last_error ? (" · 错误: " + p.last_error) : "";
-    st.textContent = "已完成 · 探测 " + probed + " · 删除 " + deleted + " · 存活 " + alive + extra + err;
+    var scope = p.scope ? (" · 范围 " + (p.scope==="spending_only"?"冷却复核":"全量启用")) : "";
+    var saved = p.saved_at_ms ? (" · 已持久化") : "";
+    st.textContent = "已完成 · 探测 " + probed + " · 存活 " + alive + " · 删除 " + deleted + " · 冷却 " + Number(p.total_cooldown||0) + " · 恢复 " + Number(p.total_reenabled||0) + " · 异常 " + errors + extra + scope + saved + err;
     st.style.color = "var(--muted)";
     document.getElementById("patrolBtn").textContent = "启动巡查";
     document.getElementById("patrolBtn").disabled = false;
@@ -1996,7 +2349,8 @@ function paintPatrol(p, r){
   if(logFp !== (window._PATROL_LOG_FP||"")){
     window._PATROL_LOG_FP = logFp;
     tbody.innerHTML = log.map(function(e){
-      var color = e.action === "deleted" ? "var(--err)" : e.action === "error" ? "var(--warn)" : (e.action === "cooldown_skip" || e.action === "cooldown") ? "var(--muted)" : e.action === "reenabled" ? "var(--accent)" : "var(--ok)";
+      var act=e.action||"";
+      var color = act==="deleted" ? "var(--err)" : (act==="alive") ? "var(--ok)" : act==="reenabled" ? "var(--accent)" : (act==="cooldown"||act==="cooldown_skip") ? "var(--accent)" : "var(--warn)";
       return '<tr style="border-bottom:1px solid #f1f5f9">' +
         '<td style="padding:.2rem;white-space:nowrap">'+fmtTime(e.time_ms)+'</td>' +
         '<td style="max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(e.account||e.file_name||e.auth_index||"?")+'</td>' +

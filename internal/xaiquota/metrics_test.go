@@ -13,41 +13,72 @@ func TestParseFreeUsageTokens(t *testing.T) {
 	}
 }
 
-func TestBuildMetricsView(t *testing.T) {
+func TestBuildMetricsViewKnownOnly(t *testing.T) {
 	st := UsageStats{
 		DayKey:    "2026-07-11",
 		UsedToday: 100,
 		UsedTotal: 200,
 		QuotaByAuth: map[string]*AccountQuotaSnapshot{
-			"a1": {AuthIndex: "a1", Actual: 900000, Limit: 1000000},
+			"a1":   {AuthIndex: "a1", Actual: 900000, Limit: 1000000},
+			"gone": {AuthIndex: "gone", Actual: 500000, Limit: 1000000},
 		},
 		DefaultLimitPerAcct: DefaultFreeLimit,
 	}
 	v := BuildMetricsView(3, 2, 1, st)
-	if v.XAITotal != 3 || v.QuotaKnownAccounts != 1 {
+	if v.XAITotal != 3 || v.XAIEnabled != 2 || v.XAIDisabled != 1 {
 		t.Fatalf("inventory bad: %+v", v)
 	}
-	// default: known-only pool (no unobserved * 1e6)
-	if v.QuotaTotalEst != 1000000 || v.QuotaTotalKnownOnly != 1000000 {
-		t.Fatalf("total known-only est=%d known=%d", v.QuotaTotalEst, v.QuotaTotalKnownOnly)
+	if v.QuotaKnownAccounts != 2 {
+		t.Fatalf("known without live filter=%d want 2", v.QuotaKnownAccounts)
 	}
-	if v.UnobservedAccounts != 2 {
-		t.Fatalf("unobserved=%d", v.UnobservedAccounts)
+	if v.QuotaTotalEst != 2000000 {
+		t.Fatalf("known-only est=%d want 2000000", v.QuotaTotalEst)
 	}
-	if v.RollingUsedKnown != 900000 || v.RollingLimitKnown != 1000000 {
-		t.Fatalf("rolling bad: %+v", v)
+	if v.UnobservedAccounts != 0 {
+		t.Fatalf("unobserved=%d want 0 (known 2 >= enabled 2)", v.UnobservedAccounts)
 	}
-	if v.UsedTotalDisplay != 900000 {
-		t.Fatalf("used display=%d want floor known actual", v.UsedTotalDisplay)
+	if v.UsedTodayDisplay != 100 || v.UsedTotalDisplay != 200 {
+		t.Fatalf("display today=%d total=%d want 100/200", v.UsedTodayDisplay, v.UsedTotalDisplay)
 	}
-	// with unobserved estimate
-	v2 := BuildMetricsViewOpts(3, 2, 1, st, true)
-	if v2.QuotaTotalEst != 3000000 {
-		t.Fatalf("with est total=%d want 3000000", v2.QuotaTotalEst)
+	if v.RollingUsedKnown != 1400000 || v.RollingLimitKnown != 2000000 {
+		t.Fatalf("rolling bad: used=%d limit=%d", v.RollingUsedKnown, v.RollingLimitKnown)
 	}
 }
 
-func TestObserveFreeQuotaDelta(t *testing.T) {
+func TestBuildMetricsViewLiveFilterAndDailyPool(t *testing.T) {
+	st := UsageStats{
+		UsedToday: 50,
+		UsedTotal: 80,
+		QuotaByAuth: map[string]*AccountQuotaSnapshot{
+			"a1":   {AuthIndex: "a1", Actual: 100000, Limit: 1000000},
+			"gone": {AuthIndex: "gone", Actual: 999999, Limit: 1000000},
+		},
+		DefaultLimitPerAcct: DefaultFreeLimit,
+	}
+	live := map[string]bool{"a1": true}
+	v := BuildMetricsViewOpts(10, 5, 5, st, true, live)
+	if v.QuotaTotalEst != 5*DefaultFreeLimit {
+		t.Fatalf("daily pool est=%d want %d (enabled*1M)", v.QuotaTotalEst, 5*DefaultFreeLimit)
+	}
+	if v.QuotaKnownAccounts != 1 || v.RollingAccounts != 1 {
+		t.Fatalf("live filter known=%d rolling_acc=%d", v.QuotaKnownAccounts, v.RollingAccounts)
+	}
+	if v.RollingUsedKnown != 100000 || v.RollingLimitKnown != 1000000 {
+		t.Fatalf("rolling should exclude gone: used=%d limit=%d", v.RollingUsedKnown, v.RollingLimitKnown)
+	}
+	if v.UnobservedAccounts != 4 {
+		t.Fatalf("unobserved enabled=%d want 4", v.UnobservedAccounts)
+	}
+	if v.UsedTodayDisplay != 50 || v.UsedTotalDisplay != 80 {
+		t.Fatalf("real display today=%d total=%d", v.UsedTodayDisplay, v.UsedTotalDisplay)
+	}
+	v0 := BuildMetricsViewOpts(10, 0, 10, st, true, live)
+	if v0.QuotaTotalEst != 0 {
+		t.Fatalf("enabled=0 pool=%d want 0", v0.QuotaTotalEst)
+	}
+}
+
+func TestObserveFreeQuotaSnapshotOnly(t *testing.T) {
 	dir := t.TempDir()
 	s, err := NewStore(dir + "/st.json")
 	if err != nil {
@@ -58,15 +89,21 @@ func TestObserveFreeQuotaDelta(t *testing.T) {
 		t.Fatal(err)
 	}
 	st := s.GetUsageStats()
-	if st.UsedToday != 0 {
-		t.Fatalf("first observe used_today=%d want 0", st.UsedToday)
+	if st.UsedToday != 0 || st.UsedTotal != 0 {
+		t.Fatalf("observe must not touch calendar used: today=%d total=%d", st.UsedToday, st.UsedTotal)
+	}
+	if st.QuotaByAuth["a1"] == nil || st.QuotaByAuth["a1"].Actual != 1000 {
+		t.Fatalf("snapshot missing: %+v", st.QuotaByAuth["a1"])
 	}
 	if err := s.ObserveFreeQuota("a1", 1500, 1000000, now); err != nil {
 		t.Fatal(err)
 	}
 	st = s.GetUsageStats()
-	if st.UsedToday != 500 || st.UsedTotal != 500 {
-		t.Fatalf("delta today=%d total=%d", st.UsedToday, st.UsedTotal)
+	if st.UsedToday != 0 || st.UsedTotal != 0 {
+		t.Fatalf("second observe still no delta into used: today=%d total=%d", st.UsedToday, st.UsedTotal)
+	}
+	if st.QuotaByAuth["a1"].Actual != 1500 {
+		t.Fatalf("snapshot actual=%d want 1500", st.QuotaByAuth["a1"].Actual)
 	}
 }
 
@@ -124,14 +161,22 @@ func TestAddUsageEventPerAuthAndZeroStreak(t *testing.T) {
 	if v.DetailMissingAlert || v.ZeroTokenStreak != 0 {
 		t.Fatalf("streak should clear: %+v", v)
 	}
-}
-func TestBuildMetricsViewUnobservedDefault(t *testing.T) {
-	st := UsageStats{DefaultLimitPerAcct: DefaultFreeLimit}
-	v := BuildMetricsViewOpts(522, 500, 22, st, true)
-	if v.QuotaTotalEst != 522*DefaultFreeLimit {
-		t.Fatalf("full pool est=%d want %d", v.QuotaTotalEst, 522*DefaultFreeLimit)
+	if v.UsedTodayDisplay != 50100 {
+		t.Fatalf("display=%d want 50100", v.UsedTodayDisplay)
 	}
-	if v.UnobservedAccounts != 522 {
-		t.Fatalf("unobs=%d", v.UnobservedAccounts)
+}
+
+func TestBuildMetricsViewDailyPoolEnabledOnly(t *testing.T) {
+	st := UsageStats{DefaultLimitPerAcct: DefaultFreeLimit}
+	v := BuildMetricsViewOpts(522, 500, 22, st, true, nil)
+	if v.QuotaTotalEst != 500*DefaultFreeLimit {
+		t.Fatalf("daily pool est=%d want %d", v.QuotaTotalEst, 500*DefaultFreeLimit)
+	}
+	if v.UnobservedAccounts != 500 {
+		t.Fatalf("unobs=%d want 500 (all enabled unobserved)", v.UnobservedAccounts)
+	}
+	v2 := BuildMetricsViewOpts(22, 0, 22, st, true, nil)
+	if v2.QuotaTotalEst != 0 {
+		t.Fatalf("disabled-only pool=%d", v2.QuotaTotalEst)
 	}
 }
