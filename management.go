@@ -1015,7 +1015,6 @@ code{background:#f1f5f9;padding:.1rem .3rem;border-radius:4px;font-size:.82rem}
     <div class="row" style="justify-content:space-between">
       <div class="row">
         <button class="primary on" id="btnToggle" onclick="togglePlugin()" title="切换插件总开关"><span class="status-dot on" id="enDot"></span><span id="enBtnText">加载中…</span></button>
-        <button onclick="runTick()">立即扫描恢复</button>
         <button onclick="forceReloadState()">刷新</button>
         <button onclick="runBackfill()" id="btnBackfill" title="用 CPAMP analytics 回补日历今日真实 token">CPAMP 回补</button>
         <button onclick="runHealth()" id="btnHealth">自检</button>
@@ -1138,9 +1137,28 @@ code{background:#f1f5f9;padding:.1rem .3rem;border-radius:4px;font-size:.82rem}
     </div>
   </div>
   <div class="card" id="actionLogCard">
-    <div class="row" style="justify-content:space-between;gap:.5rem;margin-bottom:.35rem">
+    <div class="row" style="justify-content:space-between;gap:.5rem;margin-bottom:.35rem;flex-wrap:wrap">
       <div style="font-weight:700">处理日志</div>
-      <div class="muted" style="font-size:.78rem">删除历史 + 被动冷却/恢复 · 最近 50 条 · 与本轮巡查探测日志分开</div>
+      <div class="muted" style="font-size:.78rem">删除/冷却/恢复 · 最多 100 条 · 与巡查探测日志分开</div>
+    </div>
+    <div class="row" style="gap:.45rem;flex-wrap:wrap;margin-bottom:.4rem;align-items:center">
+      <select id="logFilterSrc" onchange="onActionLogFilter()" style="min-width:110px">
+        <option value="all" selected>来源:全部</option>
+        <option value="usage">被动 usage</option>
+        <option value="patrol">巡查</option>
+        <option value="tick">tick恢复</option>
+        <option value="other">其它</option>
+      </select>
+      <select id="logFilterAct" onchange="onActionLogFilter()" style="min-width:120px">
+        <option value="all" selected>动作:全部</option>
+        <option value="cooldown">冷却</option>
+        <option value="delete">删除</option>
+        <option value="recover">恢复</option>
+        <option value="error">异常</option>
+        <option value="skip">跳过</option>
+      </select>
+      <input id="logSearch" placeholder="搜账号/说明/auth" oninput="onActionLogFilter()" style="flex:1;min-width:160px">
+      <span class="muted" id="logFilterInfo" style="font-size:.76rem">—</span>
     </div>
     <div id="actionLogBox" style="height:280px;overflow-y:auto;font-size:.78rem;border:1px solid var(--border);border-radius:8px;background:var(--card,#fff)">
       <table style="width:100%;border-collapse:collapse;table-layout:fixed">
@@ -1176,7 +1194,7 @@ code{background:#f1f5f9;padding:.1rem .3rem;border-radius:4px;font-size:.82rem}
         <option value="inventory">仅库存未跟踪</option>
         <option value="active">活跃/其他</option>
       </select>
-      <input id="accSearch" placeholder="搜账号 / 文件名 / auth_index" oninput="onAccSearch()" style="flex:1;min-width:180px">
+      <input id="accSearch" placeholder="搜账号 / 文件 / auth_index / 信号 / 原因" oninput="onAccSearch()" style="flex:1;min-width:180px">
       <select id="accPageSize" onchange="ACC_PAGE=1; renderAccountTable()" style="width:110px" title="固定每页条数（不分页无限增长）">
         <option value="20" selected>20/页</option>
         <option value="30">30/页</option>
@@ -1599,7 +1617,7 @@ function paintStatusBar(d){
       tip.innerHTML = "说明：当前 <b>"+autoN+"</b> 个账号程序自动停用，恢复时间未到点（rolling 24h）。倒计时每秒刷新；状态栏随账号表重算。";
     } else if(dueN>0){
       tip.style.display = "block";
-      tip.innerHTML = "有 <b>"+dueN+"</b> 个账号已到恢复时间，等待 tick 启用（可点“立即扫描恢复”）。";
+      tip.innerHTML = "有 <b>"+dueN+"</b> 个账号已到恢复时间，等待 tick 启用（等待 tick 自动恢复）。";
     } else {
       tip.style.display = "none";
       tip.innerHTML = "";
@@ -1675,7 +1693,7 @@ function renderAccountTable(){
     if(filter === "cpa_disabled" && h !== "cpa_disabled") return false;
     if(filter === "over" && !(a.rolling_over || (a.rolling_limit>0 && a.rolling_actual>a.rolling_limit) || h==="over")) return false;
     if(q){
-      const hay = ((a.account||"")+" "+(a.file_name||"")+" "+(a.auth_index||"")).toLowerCase();
+      const hay = ((a.account||"")+" "+(a.file_name||"")+" "+(a.auth_index||"")+" "+(a.signal||"")+" "+(a.reason||"")+" "+(a.state||"")+" "+(a.disable_source||"")).toLowerCase();
       if(hay.indexOf(q) < 0) return false;
     }
     return true;
@@ -2160,11 +2178,6 @@ async function togglePlugin(){
     if(btn){ btn.disabled = false; }
   }
 }
-async function runTick(){
-  const r = await api("run", {method:"POST"});
-  if(!r || !r.ok){ alert("扫描失败"); return; }
-  setTimeout(loadState, 300);
-}
 (function init(){
   const k = mgmtKey();
   if(k) document.getElementById("cfgKey").value = k;
@@ -2256,11 +2269,37 @@ function renderDelHistFromState(items){
   }).join("");
 }
 
+function onActionLogFilter(){
+  window.ACTION_LOG_FP = ""; // force repaint
+  if(window._ACTION_LOG_CACHE){
+    renderActionLog(window._ACTION_LOG_CACHE.deletes, window._ACTION_LOG_CACHE.actions);
+  }
+}
+function actionLogSourceBucket(src, reason){
+  var s = String(src||"").toLowerCase();
+  var r = String(reason||"");
+  if(s.indexOf("patrol")>=0 || r.indexOf("patrol:")>=0) return "patrol";
+  if(s.indexOf("tick")>=0 || s.indexOf("recover")>=0 && r.indexOf("tick")>=0) return "tick";
+  if(s.indexOf("usage")>=0 || s.indexOf("handle")>=0 || s === "被动" || s === "passive") return "usage";
+  if(s === "死号" || s === "区域" || s === "积分") return "usage";
+  if(s === "巡查") return "patrol";
+  return s ? "other" : "usage";
+}
+function actionLogActBucket(act){
+  var a = String(act||"").toLowerCase();
+  if(a==="delete"||a==="deleted") return "delete";
+  if(a==="cooldown"||a.indexOf("cooldown")>=0) return "cooldown";
+  if(a==="recover"||a==="reenable"||a==="reenabled") return "recover";
+  if(a==="error"||a.indexOf("net_")===0||a.indexOf("probe_")===0||a==="region_block"||a==="cli_version") return "error";
+  if(a.indexOf("skip")>=0) return "skip";
+  return a || "other";
+}
 function renderActionLog(deletes, actions){
   var tb = document.getElementById("actionLogBody") || document.getElementById("passiveActionBody");
   if(!tb) return;
   if(!Array.isArray(deletes)) deletes = [];
   if(!Array.isArray(actions)) actions = [];
+  window._ACTION_LOG_CACHE = {deletes: deletes, actions: actions};
   var rows = [];
   deletes.forEach(function(x){
     var rs = String(x.reason||"");
@@ -2280,26 +2319,44 @@ function renderActionLog(deletes, actions){
     var k=(r.auth_index||r.account)+":"+r.action+":"+Math.floor((r.time_ms||0)/2000);
     if(seen[k]) return; seen[k]=1; list.push(r);
   });
-  list = list.slice(0,50);
-  var fp = list.map(function(x){ return (x.time_ms||0)+":"+(x.action||"")+":"+(x.auth_index||x.account||"")+":"+(x.reason||""); }).join("|");
+  // filters
+  var fSrc = ((document.getElementById("logFilterSrc")||{}).value)||"all";
+  var fAct = ((document.getElementById("logFilterAct")||{}).value)||"all";
+  var q = (((document.getElementById("logSearch")||{}).value)||"").toLowerCase().trim();
+  var filtered = list.filter(function(r){
+    if(fSrc !== "all" && actionLogSourceBucket(r.source, r.reason) !== fSrc) return false;
+    if(fAct !== "all" && actionLogActBucket(r.action) !== fAct) return false;
+    if(q){
+      var hay = ((r.account||"")+" "+(r.auth_index||"")+" "+(r.reason||"")+" "+(r.action||"")+" "+(r.source||"")+" "+(r.http_code||"")).toLowerCase();
+      if(hay.indexOf(q) < 0) return false;
+    }
+    return true;
+  });
+  var info = document.getElementById("logFilterInfo");
+  if(info) info.textContent = "显示 "+Math.min(100, filtered.length)+" / 合并 "+list.length;
+  filtered = filtered.slice(0,100);
+  var fp = fSrc+"|"+fAct+"|"+q+"|"+filtered.map(function(x){ return (x.time_ms||0)+":"+(x.action||"")+":"+(x.auth_index||x.account||"")+":"+(x.reason||""); }).join("|");
   if(fp === (window.ACTION_LOG_FP||"")) return;
   window.ACTION_LOG_FP = fp;
-  if(!list.length){
-    tb.innerHTML = '<tr><td colspan="6" class="muted" style="padding:.5rem">暂无处理记录（冷却/删除/恢复后会出现）</td></tr>';
+  if(!filtered.length){
+    tb.innerHTML = '<tr><td colspan="6" class="muted" style="padding:.5rem">无匹配记录（可清空筛选）</td></tr>';
     return;
   }
-  tb.innerHTML = list.map(function(x){
+  tb.innerHTML = filtered.map(function(x){
     var color = (x.action==="delete"||x.action==="deleted") ? "var(--err)" : ((x.action==="recover"||x.action==="reenable"||x.action==="reenabled") ? "var(--ok)" : (String(x.action||"").indexOf("skip")>=0 ? "var(--muted)" : "var(--warn)"));
+    var actLab = (typeof passiveActionLabel==="function" ? passiveActionLabel(x.action) : null) || (typeof patrolActionLabel==="function" ? patrolActionLabel(x.action) : x.action) || x.action || "—";
+    if(x.action==="delete"||x.action==="deleted") actLab = "删除";
     return '<tr style="border-bottom:1px solid #f1f5f9">' +
       '<td style="padding:.2rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+fmtTime(x.time_ms)+'</td>' +
-      '<td style="font-weight:600;color:'+color+';white-space:nowrap">'+esc(passiveActionLabel(x.action))+'</td>' +
-      '<td style="white-space:nowrap">'+esc(x.source||"—")+'</td>' +
-      '<td style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(x.account||"?")+'</td>' +
-      '<td>'+(x.http_code||"-")+'</td>' +
-      '<td style="color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(x.reason||"")+'</td>' +
+      '<td style="color:'+color+';font-weight:600;white-space:nowrap">'+esc(actLab)+'</td>' +
+      '<td style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+esc(x.source||"—")+'</td>' +
+      '<td style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="'+esc(x.auth_index||"")+'">'+esc(x.account||"?")+'</td>' +
+      '<td>'+(x.http_code||"—")+'</td>' +
+      '<td style="color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="'+esc(x.reason||"")+'">'+esc(x.reason||"")+'</td>' +
     '</tr>';
   }).join("");
 }
+
 function renderPassiveActions(items){ renderActionLog([], items||[]); }
 function renderDelHistFromState(items){ /* merged into action log */ }
 // ===== Patrol =====
