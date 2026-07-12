@@ -693,6 +693,7 @@ func toggleResponse(req managementRequest) ([]byte, error) {
 	} else {
 		cfg.Enabled = !cfg.Enabled
 	}
+	cfg.RuntimeEnabledOverride = true
 	guard().ApplyConfig(cfg)
 	return jsonResponse(map[string]any{"ok": true, "enabled": cfg.Enabled})
 }
@@ -856,6 +857,7 @@ func patrolConfigResponse(req managementRequest) ([]byte, error) {
 	if body.PatrolBatchSize != nil {
 		cfg.PatrolBatchSize = int(*body.PatrolBatchSize)
 	}
+	cfg.RuntimePatrolEnOverride = true
 	guard().ApplyConfig(cfg)
 	return jsonResponse(map[string]any{
 		"ok":             true,
