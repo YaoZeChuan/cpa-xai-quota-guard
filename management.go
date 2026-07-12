@@ -1025,25 +1025,27 @@ code{background:#f1f5f9;padding:.1rem .3rem;border-radius:4px;font-size:.82rem}
         <span style="color:var(--warn)">错误: <b id="patrolErrors">0</b></span>
       </div>
     </div>
-    <div id="patrolDelHist" style="margin-top:.7rem;display:none">
+    <div id="patrolDelHist" style="margin-top:.7rem">
       <div style="font-weight:600;margin-bottom:.3rem;font-size:.82rem;color:var(--muted)">删除历史（最近 20 条）</div>
-      <div style="max-height:180px;overflow-y:auto;font-size:.78rem;border:1px solid var(--border);border-radius:8px">
-        <table style="width:100%;border-collapse:collapse">
-          <thead><tr style="text-align:left;color:var(--muted);border-bottom:1px solid var(--border)">
-            <th style="padding:.25rem">时间</th><th>账号</th><th>来源</th><th>原因</th>
+      <div id="patrolDelBox" style="height:180px;overflow-y:auto;font-size:.78rem;border:1px solid var(--border);border-radius:8px;background:var(--card,#fff)">
+        <table style="width:100%;border-collapse:collapse;table-layout:fixed">
+          <thead><tr style="text-align:left;color:var(--muted);border-bottom:1px solid var(--border);position:sticky;top:0;background:var(--card,#fff)">
+            <th style="padding:.25rem;width:28%">时间</th><th style="width:22%">账号</th><th style="width:10%">来源</th><th>原因</th>
           </tr></thead>
-          <tbody id="patrolDelBody"></tbody>
+          <tbody id="patrolDelBody"><tr><td colspan="4" class="muted" style="padding:.5rem">加载中…</td></tr></tbody>
         </table>
       </div>
     </div>
-    <div id="patrolLog" style="margin-top:.7rem;max-height:220px;overflow-y:auto;font-size:.78rem;display:none;border:1px solid var(--border);border-radius:8px">
-      <div style="font-weight:600;margin:.35rem .4rem;font-size:.82rem;color:var(--muted)">巡查探测日志</div>
-      <table style="width:100%;border-collapse:collapse">
-        <thead><tr style="text-align:left;color:var(--muted);border-bottom:1px solid var(--border)">
-          <th style="padding:.25rem">时间</th><th>账号</th><th>动作</th><th>HTTP</th><th>原因</th>
-        </tr></thead>
-        <tbody id="patrolLogBody"></tbody>
-      </table>
+    <div id="patrolLog" style="margin-top:.7rem;display:none">
+      <div style="font-weight:600;margin-bottom:.3rem;font-size:.82rem;color:var(--muted)">巡查探测日志</div>
+      <div style="height:220px;overflow-y:auto;font-size:.78rem;border:1px solid var(--border);border-radius:8px;background:var(--card,#fff)">
+        <table style="width:100%;border-collapse:collapse;table-layout:fixed">
+          <thead><tr style="text-align:left;color:var(--muted);border-bottom:1px solid var(--border);position:sticky;top:0;background:var(--card,#fff)">
+            <th style="padding:.25rem;width:24%">时间</th><th style="width:22%">账号</th><th style="width:12%">动作</th><th style="width:10%">HTTP</th><th>原因</th>
+          </tr></thead>
+          <tbody id="patrolLogBody"></tbody>
+        </table>
+      </div>
     </div>
   </div>
   <div class="card">
@@ -1438,7 +1440,7 @@ function paintStatusBar(d){
       tip.innerHTML = "";
     }
   }
-  renderDelHist(Array.isArray(d.delete_history) ? d.delete_history : null, {allowEmpty:true});
+  // delete history is NOT refreshed here (avoids 1s blink with patrol poll)
   // live countdown cells without full re-fetch
   const nowMs = Date.now();
 
@@ -1625,6 +1627,7 @@ async function loadState(){
     const vb = document.getElementById("verBadge");
     if(vb) vb.textContent = "v" + (d.version || "?");
     paintStatusBar(d);
+    renderDelHistFromState(d.delete_history);
     const s = d.summary || {};
     const tip = document.getElementById("recoverTip");
     if(tip && s.hot_hidden > 0){
@@ -1792,53 +1795,29 @@ async function runTick(){
   // visibility resume
   document.addEventListener("visibilitychange", function(){ if(!document.hidden) loadState(); });
 })();
-// ===== Delete History (shared renderer, avoids DOM thrash) =====
+// ===== Delete History: ONLY updated by loadState (not paintPatrol / 1s paintStatusBar) =====
 var DEL_HIST_FP = "";
-var DEL_HIST_LAST = [];
-function extractDeleteHistory(payload){
-  if(!payload) return null;
-  // api() wraps as {ok,result}; result may be body; body may nest delete_history
-  var body = (payload.result != null) ? payload.result : payload;
-  if(body && Array.isArray(body.delete_history)) return body.delete_history;
-  if(Array.isArray(payload.delete_history)) return payload.delete_history;
-  return null; // null = missing field (do not clear); [] = explicit empty
-}
-function renderDelHist(items, opts){
-  opts = opts || {};
-  var dhWrap = document.getElementById("patrolDelHist");
+function renderDelHistFromState(items){
   var dhBody = document.getElementById("patrolDelBody");
-  if(!dhWrap || !dhBody) return;
-  // null/undefined: incomplete payload from patrol poll — keep last good, do not blink
-  if(items == null){
-    if(DEL_HIST_LAST.length){ dhWrap.style.display = ""; }
-    return;
-  }
+  if(!dhBody) return;
   if(!Array.isArray(items)) items = [];
-  if(!items.length){
-    // only clear when caller explicitly allows (state says empty)
-    if(opts.allowEmpty){
-      if(dhWrap.style.display !== "none") dhWrap.style.display = "none";
-      if(DEL_HIST_FP){ DEL_HIST_FP = ""; dhBody.innerHTML = ""; DEL_HIST_LAST = []; }
-    }
-    return;
-  }
-  var fp = items.slice(0,20).map(function(x){
-    return (x.auth_index||x.file_name||"") + ":" + (x.deleted_at_ms||0) + ":" + String(x.reason||"").slice(0,40);
+  var list = items.slice(0,20);
+  var fp = list.map(function(x){
+    return String(x.auth_index||x.file_name||"") + ":" + String(x.deleted_at_ms||0);
   }).join("|");
-  if(fp === DEL_HIST_FP){
-    dhWrap.style.display = "";
+  if(fp === DEL_HIST_FP) return;
+  DEL_HIST_FP = fp;
+  if(!list.length){
+    dhBody.innerHTML = '<tr><td colspan="4" class="muted" style="padding:.5rem">暂无删除记录</td></tr>';
     return;
   }
-  DEL_HIST_FP = fp;
-  DEL_HIST_LAST = items.slice(0,20);
-  dhWrap.style.display = "";
-  dhBody.innerHTML = DEL_HIST_LAST.map(function(x){
+  dhBody.innerHTML = list.map(function(x){
     var src = String(x.reason||"").indexOf("patrol:")>=0 ? "巡查" : "额度";
     return '<tr style="border-bottom:1px solid #f1f5f9">' +
-      '<td style="padding:.2rem;white-space:nowrap">'+fmtTime(x.deleted_at_ms)+'</td>' +
-      '<td style="max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(x.account||x.file_name||x.auth_index||"?")+'</td>' +
+      '<td style="padding:.2rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+fmtTime(x.deleted_at_ms)+'</td>' +
+      '<td style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(x.account||x.file_name||x.auth_index||"?")+'</td>' +
       '<td style="font-weight:600;white-space:nowrap">'+src+'</td>' +
-      '<td style="color:var(--muted);max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(x.reason||"")+'</td>' +
+      '<td style="color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(x.reason||"")+'</td>' +
     '</tr>';
   }).join("");
 }
@@ -1906,8 +1885,7 @@ function paintPatrol(p, r){
       '</tr>';
     }).join("");
   }
-  // delete_history lives on api result body; never pass [] for missing field (blinks hide/show)
-  renderDelHist(extractDeleteHistory(r) || extractDeleteHistory(p));
+  // delete history intentionally not updated from patrol poll (stable UI)
 }
 async function patrolStart(){
   var btn = document.getElementById("patrolBtn");
@@ -1940,7 +1918,12 @@ async function patrolPoll(){
   var p = extractPatrol(r);
   if(!p) return;
   paintPatrol(p, r);
-  if(!p.running && PATROL_POLL){ clearInterval(PATROL_POLL); PATROL_POLL = null; }
+  if(!p.running && PATROL_POLL){
+    clearInterval(PATROL_POLL);
+    PATROL_POLL = null;
+    // one refresh after sweep ends so delete history picks up new deletes (not during poll)
+    try{ loadState(); }catch(e){}
+  }
 }
 // page open: sync last patrol status once
 setTimeout(function(){ try{ patrolPoll(); }catch(e){} }, 800);
