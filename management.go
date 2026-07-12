@@ -75,6 +75,7 @@ func buildManagementRegistration() managementRegistration {
 		{Method: "POST", Path: "/cpa-xai-quota-guard/patrol", Description: "启动主动巡查(全量探测启用凭证)"},
 		{Method: "GET", Path: "/cpa-xai-quota-guard/patrol/status", Description: "巡查状态与日志"},
 		{Method: "POST", Path: "/cpa-xai-quota-guard/patrol/stop", Description: "停止当前巡查"},
+		{Method: "POST", Path: "/cpa-xai-quota-guard/patrol/config", Description: "保存定时巡查配置"},
 		},
 	}
 }
@@ -179,6 +180,8 @@ func dispatchAPI(req managementRequest, action string) ([]byte, error) {
 		return patrolStatusResponse()
 	case "patrol/stop":
 		return patrolStopResponse()
+	case "patrol/config":
+		return patrolConfigResponse(req)
 	default:
 		return okEnvelope(managementResponse{
 			StatusCode: http.StatusNotFound,
@@ -563,6 +566,12 @@ func stateResponse(req managementRequest) ([]byte, error) {
 			"cpamp_url":                    cfg.CPAMPURL,
 			"cpamp_admin_key_set":          cfg.CPAMPAdminKey != "",
 			"webhook_url_set":              cfg.WebhookURL != "",
+			"patrol_enabled":               cfg.PatrolEnabled,
+			"patrol_interval":              cfg.PatrolInterval,
+			"patrol_timeout":               cfg.PatrolTimeout,
+			"patrol_auth_dir":              cfg.PatrolAuthDir,
+			"patrol_concurrency":           cfg.PatrolConcurrency,
+			"patrol_batch_size":            cfg.PatrolBatchSize,
 		},
 		"accounts": outList,
 		"summary": map[string]any{
@@ -654,12 +663,18 @@ func backfillResponse() ([]byte, error) {
 func configResponse() ([]byte, error) {
 	cfg := guard().Config()
 	return jsonResponse(map[string]any{
-		"enabled":            cfg.Enabled,
-		"tick_seconds":       cfg.TickSeconds,
-		"max_reset_seconds":  cfg.MaxResetSeconds,
-		"management_url":     cfg.ManagementURL,
-		"management_key_set": cfg.ManagementKey != "",
-		"state_path":         cfg.StatePath,
+		"enabled":                cfg.Enabled,
+		"tick_seconds":           cfg.TickSeconds,
+		"max_reset_seconds":      cfg.MaxResetSeconds,
+		"management_url":         cfg.ManagementURL,
+		"management_key_set":     cfg.ManagementKey != "",
+		"state_path":             cfg.StatePath,
+		"patrol_enabled":         cfg.PatrolEnabled,
+		"patrol_interval":        cfg.PatrolInterval,
+		"patrol_timeout":         cfg.PatrolTimeout,
+		"patrol_auth_dir":        cfg.PatrolAuthDir,
+		"patrol_concurrency":     cfg.PatrolConcurrency,
+		"patrol_batch_size":      cfg.PatrolBatchSize,
 	})
 }
 
@@ -801,6 +816,58 @@ func patrolStopResponse() ([]byte, error) {
 	return jsonResponse(map[string]any{
 		"ok":     true,
 		"message": "stop requested",
+	})
+}
+
+func patrolConfigResponse(req managementRequest) ([]byte, error) {
+	if req.Method != http.MethodPost {
+		return okEnvelope(managementResponse{
+			StatusCode: http.StatusMethodNotAllowed,
+			Headers:    http.Header{"content-type": []string{"application/json"}},
+			Body:       []byte(`{"error":"POST required"}`),
+		})
+	}
+	var body struct {
+		PatrolEnabled   *bool   `json:"patrol_enabled"`
+		PatrolInterval  *float64 `json:"patrol_interval"`
+		PatrolTimeout   *float64 `json:"patrol_timeout"`
+		PatrolAuthDir   *string `json:"patrol_auth_dir"`
+		PatrolProxyURL  *string `json:"patrol_proxy_url"`
+		PatrolConcurrency *float64 `json:"patrol_concurrency"`
+		PatrolBatchSize *float64 `json:"patrol_batch_size"`
+	}
+	_ = json.Unmarshal(req.Body, &body)
+	cfg := guard().Config()
+	if body.PatrolEnabled != nil {
+		cfg.PatrolEnabled = *body.PatrolEnabled
+	}
+	if body.PatrolInterval != nil && *body.PatrolInterval > 0 {
+		cfg.PatrolInterval = *body.PatrolInterval
+	}
+	if body.PatrolTimeout != nil && *body.PatrolTimeout > 0 {
+		cfg.PatrolTimeout = *body.PatrolTimeout
+	}
+	if body.PatrolAuthDir != nil {
+		cfg.PatrolAuthDir = strings.TrimSpace(*body.PatrolAuthDir)
+	}
+	if body.PatrolProxyURL != nil {
+		cfg.PatrolProxyURL = strings.TrimSpace(*body.PatrolProxyURL)
+	}
+	if body.PatrolConcurrency != nil && *body.PatrolConcurrency > 0 {
+		cfg.PatrolConcurrency = int(*body.PatrolConcurrency)
+	}
+	if body.PatrolBatchSize != nil {
+		cfg.PatrolBatchSize = int(*body.PatrolBatchSize)
+	}
+	guard().ApplyConfig(cfg)
+	return jsonResponse(map[string]any{
+		"ok":             true,
+		"patrol_enabled":  cfg.PatrolEnabled,
+		"patrol_interval": cfg.PatrolInterval,
+		"patrol_timeout":  cfg.PatrolTimeout,
+		"patrol_auth_dir": cfg.PatrolAuthDir,
+		"patrol_concurrency": cfg.PatrolConcurrency,
+		"patrol_batch_size": cfg.PatrolBatchSize,
 	})
 }
 
@@ -972,6 +1039,38 @@ code{background:#f1f5f9;padding:.1rem .3rem;border-radius:4px;font-size:.82rem}
       <button class="primary" onclick="saveKey()">保存 Key</button>
     </div>
     <div class="muted" style="margin-top:.45rem;font-size:.82rem" id="cfgMeta">management_url / key 状态加载中…</div>
+  </div>
+  <div class="card">
+    <div style="font-weight:700;margin-bottom:.5rem">定时巡查配置</div>
+    <div class="row" style="gap:.6rem;flex-wrap:wrap;align-items:center">
+      <label style="display:flex;align-items:center;gap:.3rem;font-size:.85rem">
+        <input type="checkbox" id="cfgPatrolEn" style="width:auto"> 启用定时巡查
+      </label>
+      <label style="font-size:.85rem">周期(秒)
+        <input id="cfgPatrolInt" type="number" min="60" step="60" style="width:80px" placeholder="3600">
+      </label>
+      <label style="font-size:.85rem">超时(秒)
+        <input id="cfgPatrolTO" type="number" min="1" step="1" style="width:60px" placeholder="15">
+      </label>
+      <label style="font-size:.85rem">并发
+        <input id="cfgPatrolCon" type="number" min="1" step="1" style="width:60px" placeholder="8">
+      </label>
+    </div>
+    <div class="row" style="gap:.6rem;flex-wrap:wrap;margin-top:.4rem">
+      <label style="font-size:.85rem;flex:1;min-width:200px">auth 目录
+        <input id="cfgPatrolDir" type="text" placeholder="/root/.cli-proxy-api" style="width:100%">
+      </label>
+      <label style="font-size:.85rem;flex:1;min-width:180px">代理(可选)
+        <input id="cfgPatrolProxy" type="text" placeholder="socks5://host:port" style="width:100%">
+      </label>
+    </div>
+    <div class="row" style="gap:.6rem;margin-top:.4rem">
+      <label style="font-size:.85rem">每轮上限(0=不限)
+        <input id="cfgPatrolBatch" type="number" min="0" step="1" style="width:60px" placeholder="0">
+      </label>
+      <button class="primary" onclick="savePatrolConfig()">保存巡查配置</button>
+    </div>
+    <div class="muted" style="margin-top:.4rem;font-size:.8rem" id="patrolCfgHint">配置加载中…</div>
   </div>
   <div class="card">
     <div style="font-weight:600;margin-bottom:.5rem">注入测试（需真实 auth_index）</div>
@@ -1645,6 +1744,21 @@ async function loadState(){
         " · unobs_est=" + !!cfg.include_unobserved_quota_est +
         (s.hot_hidden>0 ? (" · focus热账号截断 "+s.hot_shown+"/"+s.hot_total) : "");
     }
+    // patrol config display
+    var ph = document.getElementById("patrolCfgHint");
+    if(ph){
+      var pen = cfg.patrol_enabled;
+      document.getElementById("cfgPatrolEn").checked = !!pen;
+      document.getElementById("cfgPatrolInt").value = cfg.patrol_interval || 3600;
+      document.getElementById("cfgPatrolTO").value = cfg.patrol_timeout || 15;
+      document.getElementById("cfgPatrolDir").value = cfg.patrol_auth_dir || "";
+      document.getElementById("cfgPatrolCon").value = cfg.patrol_concurrency || 8;
+      document.getElementById("cfgPatrolBatch").value = cfg.patrol_batch_size || 0;
+      document.getElementById("cfgPatrolProxy").value = ""; // sensitive, not echoed
+      ph.textContent = pen
+        ?("已启用 · 周期"+(cfg.patrol_interval||"?")+"s · 并发"+(cfg.patrol_concurrency||"?")+" · 目录"+(cfg.patrol_auth_dir||"?"))
+        :("未启用 · 需在 CPA config.yaml 中配置或通过 API 保存");
+    }
     const list = sortAccounts(d.accounts || []);
     d.accounts = list;
     LAST_TABLE_FP = accountFingerprint(list);
@@ -1693,6 +1807,32 @@ function saveKey(){
   const v = document.getElementById("cfgKey").value.trim();
   setMgmtKey(v);
   loadState();
+}
+async function savePatrolConfig(){
+  var body = {
+    patrol_enabled: document.getElementById("cfgPatrolEn").checked,
+    patrol_interval: Number(document.getElementById("cfgPatrolInt").value)||3600,
+    patrol_timeout: Number(document.getElementById("cfgPatrolTO").value)||15,
+    patrol_auth_dir: document.getElementById("cfgPatrolDir").value.trim(),
+    patrol_proxy_url: document.getElementById("cfgPatrolProxy").value.trim(),
+    patrol_concurrency: Number(document.getElementById("cfgPatrolCon").value)||8,
+    patrol_batch_size: Number(document.getElementById("cfgPatrolBatch").value)||0
+  };
+  var ph = document.getElementById("patrolCfgHint");
+  if(ph) ph.textContent = "保存中…";
+  try {
+    var r = await api("patrol/config", {method:"POST", body: JSON.stringify(body)});
+    if(!r || !r.ok){
+      if(ph) ph.textContent = "保存失败: " + JSON.stringify(r&&r.error||r);
+      alert("巡查配置保存失败: " + JSON.stringify(r&&r.error||r));
+      return;
+    }
+    if(ph) ph.textContent = "已保存 · " + (body.patrol_enabled?"已启用":"未启用") + " · 周期"+body.patrol_interval+"s" + " · 并发"+body.patrol_concurrency;
+    loadState();
+  } catch(e){
+    if(ph) ph.textContent = "保存异常: " + (e&&e.message?e.message:e);
+    alert("巡查配置保存异常: " + (e&&e.message?e.message:e));
+  }
 }
 function applyEnabledUI(en){
   const badge = document.getElementById("enBadge");

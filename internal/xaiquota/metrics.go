@@ -396,6 +396,8 @@ func BuildMetricsViewOpts(xaiTotal, xaiEnabled, xaiDisabled int, st UsageStats, 
 	}
 	// Free-tier pool estimate: known observed limits + unobserved * default 1M.
 	// Always fill unobserved so 522 accounts do not collapse to ~48 known * 1M.
+	// Cap at xaiTotal * def so stale quota data from deleted credentials doesn't inflate.
+	inventoryCap := int64(xaiTotal) * def
 	totalEst := limitKnown + int64(remaining)*def
 	if !includeUnobservedEst {
 		// known-only mode (legacy/debug): ignore unobserved free-tier assumption
@@ -403,7 +405,14 @@ func BuildMetricsViewOpts(xaiTotal, xaiEnabled, xaiDisabled int, st UsageStats, 
 	}
 	// If inventory is large but nothing observed yet, still show inventory * default.
 	if totalEst == 0 && xaiTotal > 0 {
-		totalEst = int64(xaiTotal) * def
+		totalEst = inventoryCap
+	}
+	// Cap: never exceed inventory * default (stale quota from deleted creds).
+	if inventoryCap > 0 && totalEst > inventoryCap {
+		totalEst = inventoryCap
+	}
+	if xaiTotal == 0 {
+		totalEst = 0
 	}
 	usedTotalDisplay := st.UsedTotal + st.EstimatedTotal
 	if usedKnown > usedTotalDisplay {
