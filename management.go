@@ -67,6 +67,7 @@ func buildManagementRegistration() managementRegistration {
 			{Method: "GET", Path: "/cpa-xai-quota-guard/accounts", Description: "账号列表"},
 			{Method: "GET", Path: "/cpa-xai-quota-guard/health", Description: "自检"},
 			{Method: "POST", Path: "/cpa-xai-quota-guard/backfill", Description: "从 CPAMP 回补今日用量"},
+			{Method: "POST", Path: "/cpa-xai-quota-guard/metrics/reset-today", Description: "清零日历今日已用/请求（不改累计与滚动快照；用于 0.2.18 前污染校准）"},
 			{Method: "GET", Path: "/cpa-xai-quota-guard/deletes", Description: "最近删除历史"},
 			{Method: "GET", Path: "/cpa-xai-quota-guard/export", Description: "导出今日用量 JSON"},
 			{Method: "POST", Path: "/cpa-xai-quota-guard/toggle", Description: "开关 enabled"},
@@ -165,6 +166,8 @@ func dispatchAPI(req managementRequest, action string) ([]byte, error) {
 		return healthResponse()
 	case "backfill":
 		return backfillResponse()
+	case "metrics/reset-today":
+		return metricsResetTodayResponse(req)
 	case "deletes":
 		return deletesResponse()
 	case "export":
@@ -658,6 +661,47 @@ func deletesResponse() ([]byte, error) {
 	return jsonResponse(map[string]any{"items": guard().ListDeletes(50)})
 }
 
+
+func metricsResetTodayResponse(req managementRequest) ([]byte, error) {
+	if req.Method != http.MethodPost {
+		return okEnvelope(managementResponse{
+			StatusCode: http.StatusMethodNotAllowed,
+			Headers:    http.Header{"content-type": []string{"application/json"}},
+			Body:       []byte(`{"error":"POST required"}`),
+		})
+	}
+	var body struct {
+		Confirm bool   `json:"confirm"`
+		Note    string `json:"note"`
+	}
+	_ = json.Unmarshal(req.Body, &body)
+	if !body.Confirm {
+		return jsonResponse(map[string]any{
+			"ok":      false,
+			"error":   "confirm=true required",
+			"hint":    "清零日历今日 used_today/requests_today；不改 used_total 与 rolling 快照",
+			"version": pluginVer,
+		})
+	}
+	g := guard()
+	before := g.MetricsWithInventory(0, 0, 0)
+	note := strings.TrimSpace(body.Note)
+	if note == "" {
+		note = "ui"
+	}
+	if err := g.ResetCalendarToday(note); err != nil {
+		return jsonResponse(map[string]any{"ok": false, "error": err.Error()})
+	}
+	after := g.MetricsWithInventory(0, 0, 0)
+	return jsonResponse(map[string]any{
+		"ok":      true,
+		"note":    note,
+		"before":  map[string]any{"used_today": before.UsedToday, "requests_today": before.RequestsToday, "day_key": before.DayKey},
+		"after":   map[string]any{"used_today": after.UsedToday, "requests_today": after.RequestsToday, "day_key": after.DayKey},
+		"kept":    map[string]any{"used_total": after.UsedTotal, "rolling_used": after.RollingUsedKnown},
+	})
+}
+
 func backfillResponse() ([]byte, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
 	defer cancel()
@@ -1017,6 +1061,7 @@ code{background:#f1f5f9;padding:.1rem .3rem;border-radius:4px;font-size:.82rem}
         <button class="primary on" id="btnToggle" onclick="togglePlugin()" title="切换插件总开关"><span class="status-dot on" id="enDot"></span><span id="enBtnText">加载中…</span></button>
         <button onclick="forceReloadState()">刷新</button>
         <button onclick="runBackfill()" id="btnBackfill" title="用 CPAMP analytics 回补日历今日真实 token">CPAMP 回补</button>
+        <button onclick="resetTodayUsage()" id="btnResetToday" title="清零日历今日已用/请求（不改累计与滚动快照）。用于 0.2.18 前 free-usage 污染校准">清零今日已用</button>
         <button onclick="runHealth()" id="btnHealth">自检</button>
         <button onclick="exportUsage()">导出JSON</button>
       </div>
@@ -1582,11 +1627,12 @@ function paintStatusBar(d){
     const req = m.requests_today||0;
     const est = m.estimated_today||0;
     const real = m.used_today||0;
+    const resetNote = (m.backfill_source&&String(m.backfill_source).indexOf("reset_today")===0) ? " · 已校准清零" : "";
     let extra = "请求 " + req;
     if(est>0) extra += " · 估 " + fmtToken(est);
     if(real>0) extra += " · 实 " + fmtToken(real);
     let bf = ""; if(m.backfill_source){ bf = " · 回补 " + m.backfill_source + (m.backfill_tokens_floor?(" "+fmtToken(m.backfill_tokens_floor)):""); }
-    dk.textContent = extra + " · " + (m.day_key||"—") + bf;
+    dk.textContent = extra + " · " + (m.day_key||"—") + bf + (typeof resetNote!=="undefined"?resetNote:"");
   }
   const usedTotal = (m.used_total_display != null ? m.used_total_display : (m.used_total||0));
   setToken("sUsedTotal", usedTotal);
@@ -1768,6 +1814,22 @@ async function exportUsage(){
   a.download = "xai-quota-export-"+((r.result&&r.result.day_key)||"day")+".json";
   a.click();
   URL.revokeObjectURL(a.href);
+}
+async function resetTodayUsage(){
+  if(!confirm("确认清零「日历今日已用 / 今日请求」？\\n\\n不会修改：累计已用、滚动 free-usage 快照、账号冷却状态。\\n新请求会重新累计今日用量。")) return;
+  var btn = document.getElementById("btnResetToday");
+  if(btn){ btn.disabled = true; btn.textContent = "清零中…"; }
+  try {
+    var r = await api("metrics/reset-today", {method:"POST", body:{confirm:true, note:"ui"}});
+    if(!r || !r.ok){ alert("清零失败: "+JSON.stringify(r&&r.error||r)); return; }
+    var res = (r.result!=null)?r.result:r;
+    alert("已清零今日\\n之前: "+((res.before&&res.before.used_today)||0)+"\\n之后: "+((res.after&&res.after.used_today)||0)+"\\n累计保留: "+((res.kept&&res.kept.used_total)||0));
+    loadState();
+  } catch(e){
+    alert("清零异常: "+(e&&e.message?e.message:e));
+  } finally {
+    if(btn){ btn.disabled = false; btn.textContent = "清零今日已用"; }
+  }
 }
 async function runBackfill(){
   const r = await api("backfill", {method:"POST", body:{}});

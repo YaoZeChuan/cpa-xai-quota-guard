@@ -180,3 +180,32 @@ func TestBuildMetricsViewDailyPoolEnabledOnly(t *testing.T) {
 		t.Fatalf("disabled-only pool=%d", v2.QuotaTotalEst)
 	}
 }
+
+
+func TestResetCalendarToday(t *testing.T) {
+	dir := t.TempDir()
+	s, err := NewStore(dir + "/st.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+	_ = s.AddUsageEvent("a1", 1000, false, now)
+	_ = s.ObserveFreeQuota("a1", 900000, 1000000, now)
+	st := s.GetUsageStats()
+	if st.UsedToday != 1000 {
+		t.Fatalf("used=%d", st.UsedToday)
+	}
+	if err := s.ResetCalendarToday(now, "test"); err != nil {
+		t.Fatal(err)
+	}
+	st = s.GetUsageStats()
+	if st.UsedToday != 0 || st.RequestsToday != 0 {
+		t.Fatalf("today not cleared: %+v", st)
+	}
+	if st.UsedTotal != 1000 {
+		t.Fatalf("total should keep 1000 got %d", st.UsedTotal)
+	}
+	if st.QuotaByAuth["a1"] == nil || st.QuotaByAuth["a1"].Actual != 900000 {
+		t.Fatalf("snapshot should remain: %+v", st.QuotaByAuth["a1"])
+	}
+}

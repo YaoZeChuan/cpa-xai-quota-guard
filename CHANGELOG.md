@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.2.22
+
+- **清零今日已用**（可选校准）：`POST .../metrics/reset-today` + UI 按钮
+  - 仅清零日历 `used_today` / `requests_today`（及 per-auth 今日）
+  - **不改** `used_total`、滚动 free-usage 快照、冷却/删除状态
+  - 用于 0.2.18 前 ObserveFreeQuota 污染后的人工校准（需 confirm）
+- 单测 `TestResetCalendarToday`
+
 ## 0.2.21
 
 - **移除**配置页「立即扫描恢复」按钮（恢复仍由 tick 自动执行；`POST /run` API 保留兼容）

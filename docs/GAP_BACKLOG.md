@@ -31,7 +31,7 @@
 | 仅复核冷却号覆盖面 | done | 文案/API 说明与实现一致 | 0.2.20 |
 | 巡查结果双汇总 | partial→done | 0.2.19 去掉动作条重复；需用户实测确认 | 验证 |
 | 日志持久化 | partial | delete/action/last_patrol 有；recent_log 截断 500 | 可接受 |
-| used_today 历史污染 | open | 0.2.18 前 ObserveFreeQuota 可能抬高；无自动清洗 | 0.2.20 工具/文档 |
+| used_today 历史污染 | done | 提供可选「清零今日已用」校准（不自动、不改累计） | 0.2.22 |
 | 探测代理会话复用 | partial | 有 patrolHTTP 缓存；代理变更 Invalidate | 观察 |
 | 定时巡查重启即触发 | done | patrol_initial_delay_sec 默认 60 | 0.2.20 |
 
@@ -43,7 +43,7 @@
 | 前端 embed 拆分 | open | 0.3.0 |
 | 配置向导 | open | 0.3.0 |
 | CPAMP 深度联动（除可选回补） | open | 非核心 |
-| 自动清历史 used_today | open | 需用户确认再动数据 |
+| 自动清历史 used_today | wontfix | 改为手动确认清零今日；累计不自动动 |
 
 ## P0 不变量（任何版本不得回退）
 

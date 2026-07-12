@@ -614,6 +614,13 @@ func (g *Guard) SyncInventoryUsage(successSum, failedSum, estimatePerSuccess int
 	_ = g.store.SyncAuthCounters(successSum, failedSum, estimatePerSuccess, time.Now())
 }
 
+func (g *Guard) ResetCalendarToday(note string) error {
+	if g.store == nil {
+		return fmt.Errorf("store nil")
+	}
+	return g.store.ResetCalendarToday(time.Now(), note)
+}
+
 func (g *Guard) MetricsWithInventory(xaiTotal, xaiEnabled, xaiDisabled int) MetricsView {
 	return g.MetricsWithInventoryLive(xaiTotal, xaiEnabled, xaiDisabled, nil)
 }

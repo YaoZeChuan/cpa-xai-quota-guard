@@ -461,6 +461,60 @@ func BuildMetricsViewOpts(xaiTotal, xaiEnabled, xaiDisabled int, st UsageStats, 
 
 // ApplyCalendarBackfill raises calendar-day used_today floor from an external source (e.g. CPAMP).
 // Never decreases existing plugin counters. source is recorded on LastEvent only.
+// ResetCalendarToday clears calendar-day counters (UsedToday/RequestsToday/EstimatedToday/zero-token)
+// for the current Shanghai day. Does NOT clear UsedTotal/RequestsTotal or QuotaByAuth snapshots.
+// Used when historical free-usage deltas polluted UsedToday before 0.2.18.
+func (s *Store) ResetCalendarToday(at time.Time, note string) error {
+	return s.mutateUsage(func(st *UsageStats) {
+		day := DayKeyShanghai(at)
+		st.DayKey = day
+		st.UsedToday = 0
+		st.RequestsToday = 0
+		st.EstimatedToday = 0
+		st.ZeroTokenSuccessToday = 0
+		st.ZeroTokenStreak = 0
+		for _, u := range st.UsageByAuth {
+			if u == nil {
+				continue
+			}
+			u.UsedToday = 0
+			u.RequestsToday = 0
+		}
+		if note != "" {
+			st.BackfillSource = "reset_today:" + note
+			st.BackfillAtMS = at.UnixMilli()
+			st.BackfillTokensFloor = 0
+		}
+		st.LastEventAtMS = at.UnixMilli()
+	})
+}
+
+// SetCalendarTodayExact sets UsedToday/RequestsToday to exact values for current day (does not raise UsedTotal).
+// Prefer Reset + natural accumulation; this is for operator correction after pollution.
+func (s *Store) SetCalendarTodayExact(usedToday, requestsToday int64, source string, at time.Time) error {
+	if usedToday < 0 {
+		usedToday = 0
+	}
+	if requestsToday < 0 {
+		requestsToday = 0
+	}
+	return s.mutateUsage(func(st *UsageStats) {
+		day := DayKeyShanghai(at)
+		if st.DayKey != day {
+			st.DayKey = day
+			// new day: totals unchanged
+		}
+		st.DayKey = day
+		st.UsedToday = usedToday
+		st.RequestsToday = requestsToday
+		st.EstimatedToday = 0
+		st.BackfillSource = source
+		st.BackfillAtMS = at.UnixMilli()
+		st.BackfillTokensFloor = usedToday
+		st.LastEventAtMS = at.UnixMilli()
+	})
+}
+
 func (s *Store) ApplyCalendarBackfill(dayKey string, usedTodayFloor, requestsTodayFloor int64, source string, at time.Time) (applied bool, err error) {
 	if usedTodayFloor < 0 {
 		usedTodayFloor = 0
