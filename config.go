@@ -28,6 +28,11 @@ func configFields() []pluginapi.ConfigField {
 		{Name: "cpamp_url", Type: pluginapi.ConfigFieldTypeString, Description: "CPAMP 基址(可选，用于回补/深链)"},
 		{Name: "cpamp_admin_key", Type: pluginapi.ConfigFieldTypeString, Description: "CPAMP Panel Admin Key(敏感)"},
 		{Name: "webhook_url", Type: pluginapi.ConfigFieldTypeString, Description: "冷却/删除事件 Webhook URL(可选)"},
+		{Name: "patrol_enabled", Type: pluginapi.ConfigFieldTypeBoolean, Description: "启用定时巡查(默认关闭)"},
+		{Name: "patrol_interval", Type: pluginapi.ConfigFieldTypeNumber, Description: "巡查周期(秒,默认3600)"},
+		{Name: "patrol_timeout", Type: pluginapi.ConfigFieldTypeNumber, Description: "单个凭证探测超时(秒,默认15)"},
+		{Name: "patrol_batch_size", Type: pluginapi.ConfigFieldTypeNumber, Description: "每轮巡查上限(0=不限)"},
+		{Name: "patrol_auth_dir", Type: pluginapi.ConfigFieldTypeString, Description: "auth file 所在目录(如 /root/.cli-proxy-api)"},
 	}
 }
 
@@ -114,6 +119,21 @@ func applyConfigMap(cfg *xaiquota.Config, m map[string]any) {
 	}
 	if v, ok := asString(m["webhook_url"]); ok {
 		cfg.WebhookURL = strings.TrimSpace(v)
+	}
+	if v, ok := asBool(m["patrol_enabled"]); ok {
+		cfg.PatrolEnabled = v
+	}
+	if v, ok := asFloat(m["patrol_interval"]); ok && v > 0 {
+		cfg.PatrolInterval = v
+	}
+	if v, ok := asFloat(m["patrol_timeout"]); ok && v > 0 {
+		cfg.PatrolTimeout = v
+	}
+	if v, ok := asFloat(m["patrol_batch_size"]); ok && v > 0 {
+		cfg.PatrolBatchSize = int(v)
+	}
+	if v, ok := asString(m["patrol_auth_dir"]); ok {
+		cfg.PatrolAuthDir = strings.TrimSpace(v)
 	}
 }
 

@@ -27,6 +27,13 @@ type Config struct {
 	CPAMPAdminKey string
 	// WebhookURL receives cooldown/delete JSON posts (optional).
 	WebhookURL string
+
+	// Patrol (proactive credential sweep).
+	PatrolEnabled   bool
+	PatrolInterval  float64
+	PatrolTimeout   float64
+	PatrolBatchSize int
+	PatrolAuthDir   string
 }
 
 // Defaults returns safe defaults. enabled=false until configured.
@@ -38,6 +45,11 @@ func Defaults() Config {
 		MaxResetSeconds:           86400,
 		MinResetSeconds:           0,
 		IncludeUnobservedQuotaEst: true,
+			PatrolEnabled:    false,
+			PatrolInterval:   3600,
+			PatrolTimeout:    15,
+			PatrolBatchSize:  0,
+			PatrolAuthDir:    "",
 	}
 }
 
@@ -92,6 +104,7 @@ type Guard struct {
 
 	stopCh chan struct{}
 	wg     sync.WaitGroup
+	patrol patrolState
 }
 
 // NewGuard constructs a guard with durable state.
@@ -177,6 +190,7 @@ func (g *Guard) StopTicker() {
 
 func (g *Guard) tickerLoop() {
 	defer g.wg.Done()
+	var patrolNext time.Time
 	for {
 		cfg := g.Config()
 		interval := time.Duration(cfg.TickSeconds * float64(time.Second))
@@ -185,6 +199,17 @@ func (g *Guard) tickerLoop() {
 		}
 		timer := time.NewTimer(interval)
 		g.Tick()
+
+		// Patrol scheduling
+		if cfg.PatrolEnabled && cfg.PatrolAuthDir != "" {
+			patrolInterval := time.Duration(cfg.PatrolInterval) * time.Second
+			if patrolInterval <= 0 { patrolInterval = 3600 * time.Second }
+			now := time.Now()
+			if patrolNext.IsZero() || now.After(patrolNext) {
+				patrolNext = now.Add(patrolInterval)
+				go g.PatrolSweep()
+			}
+		}
 		g.mu.Lock()
 		stop := g.stopCh
 		g.mu.Unlock()

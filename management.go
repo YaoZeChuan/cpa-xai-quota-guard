@@ -759,6 +759,41 @@ func injectResponse(req managementRequest) ([]byte, error) {
 }
 
 
+
+func patrolResponse(req managementRequest) ([]byte, error) {
+	if req.Method != http.MethodPost {
+		return okEnvelope(managementResponse{
+			StatusCode: http.StatusMethodNotAllowed,
+			Headers:    http.Header{"content-type": []string{"application/json; charset=utf-8"}},
+			Body:       []byte(`{"error":"POST required"}`),
+		})
+	}
+	g := guard()
+	status := g.PatrolRunOnce()
+	return jsonResponse(map[string]any{
+		"ok":         true,
+		"patrol":     status,
+	})
+}
+
+func patrolStatusResponse() ([]byte, error) {
+	g := guard()
+	status := g.PatrolStatus()
+	return jsonResponse(map[string]any{
+		"ok":     true,
+		"patrol": status,
+	})
+}
+
+func patrolStopResponse() ([]byte, error) {
+	g := guard()
+	g.PatrolStop()
+	return jsonResponse(map[string]any{
+		"ok":     true,
+		"message": "stop requested",
+	})
+}
+
 func decodeManagementBody(raw json.RawMessage) []byte {
 	if len(raw) == 0 {
 		return nil
@@ -941,7 +976,37 @@ code{background:#f1f5f9;padding:.1rem .3rem;border-radius:4px;font-size:.82rem}
       </select>
       <button class="warn" onclick="inject()">注入并处理</button>
     </div>
-    <div class="muted" style="margin-top:.4rem;font-size:.8rem">403 会调用 DELETE auth-files；请确认目标账号。429 会按 24h 滚动窗口冷却（受 max_reset_seconds 限制）。</div>
+        <div class="muted" style="margin-top:.4rem;font-size:.8rem">403 会调用 DELETE auth-files；请确认目标账号。429 会按 24h 滚动窗口冷却（受 max_reset_seconds 限制）。</div>
+  </div>
+  <div class="card" id="patrolCard">
+    <div class="row" style="justify-content:space-between;gap:.5rem;margin-bottom:.35rem">
+      <div style="font-weight:700">主动巡查 (Patrol)</div>
+      <div class="muted" style="font-size:.78rem" id="patrolHint">全量探测所有启用的 xAI 凭证，自动删除 403/401/402 死号</div>
+    </div>
+    <div class="row" style="gap:.6rem;flex-wrap:wrap;align-items:center">
+      <button id="patrolBtn" class="warn" onclick="patrolStart()">启动巡查</button>
+      <button id="patrolStopBtn" class="off" onclick="patrolStop()" style="display:none">停止巡查</button>
+      <span id="patrolStatus" class="muted" style="font-size:.82rem">空闲</span>
+    </div>
+    <div id="patrolProgress" style="margin-top:.6rem;display:none">
+      <div style="background:#e2e8f0;border-radius:6px;height:.5rem;overflow:hidden">
+        <div id="patrolBar" style="background:var(--accent);height:100%;width:0%;transition:width .3s"></div>
+      </div>
+      <div class="row" style="margin-top:.4rem;gap:1rem;font-size:.8rem">
+        <span>已探测: <b id="patrolProbed">0</b></span>
+        <span style="color:var(--ok)">存活: <b id="patrolAlive">0</b></span>
+        <span style="color:var(--err)">已删除: <b id="patrolDeleted">0</b></span>
+        <span style="color:var(--warn)">错误: <b id="patrolErrors">0</b></span>
+      </div>
+    </div>
+    <div id="patrolLog" style="margin-top:.7rem;max-height:320px;overflow-y:auto;font-size:.78rem;display:none">
+      <table style="width:100%;border-collapse:collapse">
+        <thead><tr style="text-align:left;color:var(--muted);border-bottom:1px solid var(--border)">
+          <th style="padding:.25rem">时间</th><th>账号</th><th>动作</th><th>HTTP</th><th>原因</th>
+        </tr></thead>
+        <tbody id="patrolLogBody"></tbody>
+      </table>
+    </div>
   </div>
   <div class="card">
     <div class="row" style="justify-content:space-between;gap:.5rem;margin-bottom:.35rem">
@@ -1665,6 +1730,69 @@ async function inject(){
   // visibility resume
   document.addEventListener("visibilitychange", function(){ if(!document.hidden) loadState(); });
 })();
+// ===== Patrol =====
+var PATROL_POLL = null;
+async function patrolStart(){
+  var btn = document.getElementById("patrolBtn");
+  btn.disabled = true;
+  btn.textContent = "巡查中...";
+  document.getElementById("patrolStopBtn").style.display = "";
+  document.getElementById("patrolProgress").style.display = "";
+  document.getElementById("patrolLog").style.display = "";
+  try {
+    var r = await api("patrol", {method:"POST"});
+    if(!r || !r.ok){ alert("巡查启动失败: "+JSON.stringify(r&&r.error||r)); return; }
+    if(PATROL_POLL) clearInterval(PATROL_POLL);
+    PATROL_POLL = setInterval(patrolPoll, 2000);
+    patrolPoll();
+  } finally {
+    btn.disabled = false;
+  }
+}
+async function patrolStop(){
+  await api("patrol/stop", {method:"POST"});
+}
+async function patrolPoll(){
+  var r = await api("patrol/status", {method:"GET"});
+  if(!r || !r.ok) return;
+  var p = r.patrol || {};
+  var running = p.running;
+  document.getElementById("patrolProbed").textContent = p.total_probed || 0;
+  document.getElementById("patrolAlive").textContent = p.total_alive || 0;
+  document.getElementById("patrolDeleted").textContent = p.total_deleted || 0;
+  document.getElementById("patrolErrors").textContent = p.total_errors || 0;
+  // Progress bar
+  var pct = 0;
+  if(p.total_probed > 0) pct = Math.round((p.total_alive + p.total_deleted + p.total_errors) / p.total_probed * 100);
+  document.getElementById("patrolBar").style.width = pct + "%";
+  var st = document.getElementById("patrolStatus");
+  if(running){
+    st.textContent = "巡查中... 已探测 " + p.total_probed;
+    st.style.color = "var(--accent)";
+  } else {
+    st.textContent = "已完成 · 探测 " + p.total_probed + " · 删除 " + p.total_deleted;
+    st.style.color = "var(--muted)";
+    document.getElementById("patrolBtn").textContent = "启动巡查";
+    document.getElementById("patrolBtn").disabled = false;
+    document.getElementById("patrolStopBtn").style.display = "none";
+    if(PATROL_POLL){ clearInterval(PATROL_POLL); PATROL_POLL = null; }
+  }
+  // Render log
+  var log = p.recent_log || [];
+  var tbody = document.getElementById("patrolLogBody");
+  tbody.innerHTML = log.map(function(e){
+    var color = e.action === "deleted" ? "var(--err)" : e.action === "error" ? "var(--warn)" : e.action === "cooldown_skip" ? "var(--muted)" : "var(--ok)";
+    return '<tr style="border-bottom:1px solid #f1f5f9">' +
+      '<td style="padding:.2rem">'+fmtTime(e.time_ms)+'</td>' +
+      '<td>'+esc(e.account||e.file_name||e.auth_index||"?")+'</td>' +
+      '<td style="color:'+color+';font-weight:600">'+esc(e.action)+'</td>' +
+      '<td>'+(e.http_code||"-")+'</td>' +
+      '<td style="color:var(--muted);max-width:300px;overflow:hidden;text-overflow:ellipsis">'+esc(e.reason||"")+'</td>' +
+    '</tr>';
+  }).join("");
+  // Reverse newest first
+  tbody.querySelectorAll("tr").forEach(function(){}); // already in order
+}
 </script></body></html>`
 	return []byte(tpl)
 }
