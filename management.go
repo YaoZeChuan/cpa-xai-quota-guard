@@ -1037,8 +1037,11 @@ code{background:#f1f5f9;padding:.1rem .3rem;border-radius:4px;font-size:.82rem}
     </div>
     <div class="muted" style="margin-top:.45rem;font-size:.82rem" id="cfgMeta">management_url / key 状态加载中…</div>
   </div>
-  <div class="card">
-    <div style="font-weight:700;margin-bottom:.5rem">定时巡查配置</div>
+  <div class="card" id="patrolCard">
+    <div class="row" style="justify-content:space-between;gap:.5rem;margin-bottom:.35rem">
+      <div style="font-weight:700">主动巡查</div>
+      <div class="muted" style="font-size:.78rem" id="patrolHint">全量探测所有启用的 xAI 凭证，自动删除 403/401/402 死号</div>
+    </div>
     <div class="row" style="gap:.6rem;flex-wrap:wrap;align-items:center">
       <label style="display:flex;align-items:center;gap:.3rem;font-size:.85rem">
         <input type="checkbox" id="cfgPatrolEn" style="width:auto"> 启用定时巡查
@@ -1052,6 +1055,10 @@ code{background:#f1f5f9;padding:.1rem .3rem;border-radius:4px;font-size:.82rem}
       <label style="font-size:.85rem">并发
         <input id="cfgPatrolCon" type="number" min="1" step="1" style="width:60px" placeholder="8">
       </label>
+      <label style="font-size:.85rem">每轮上限(0=不限)
+        <input id="cfgPatrolBatch" type="number" min="0" step="1" style="width:60px" placeholder="0">
+      </label>
+      <button class="primary" onclick="savePatrolConfig()">保存配置</button>
     </div>
     <div class="row" style="gap:.6rem;flex-wrap:wrap;margin-top:.4rem">
       <label style="font-size:.85rem;flex:1;min-width:200px">auth 目录
@@ -1061,19 +1068,8 @@ code{background:#f1f5f9;padding:.1rem .3rem;border-radius:4px;font-size:.82rem}
         <input id="cfgPatrolProxy" type="text" placeholder="socks5://host:port" style="width:100%">
       </label>
     </div>
-    <div class="row" style="gap:.6rem;margin-top:.4rem">
-      <label style="font-size:.85rem">每轮上限(0=不限)
-        <input id="cfgPatrolBatch" type="number" min="0" step="1" style="width:60px" placeholder="0">
-      </label>
-      <button class="primary" onclick="savePatrolConfig()">保存巡查配置</button>
-    </div>
     <div class="muted" style="margin-top:.4rem;font-size:.8rem" id="patrolCfgHint">配置加载中…</div>
-  </div>
-  <div class="card" id="patrolCard">
-    <div class="row" style="justify-content:space-between;gap:.5rem;margin-bottom:.35rem">
-      <div style="font-weight:700">主动巡查</div>
-      <div class="muted" style="font-size:.78rem" id="patrolHint">全量探测所有启用的 xAI 凭证，自动删除 403/401/402 死号</div>
-    </div>
+    <hr style="border:none;border-top:1px solid var(--border);margin:.7rem 0">
     <div class="row" style="gap:.6rem;flex-wrap:wrap;align-items:center">
       <button id="patrolBtn" class="warn" onclick="patrolStart()">启动巡查</button>
       <button id="patrolStopBtn" class="off" onclick="patrolStop()" style="display:none">停止巡查</button>
