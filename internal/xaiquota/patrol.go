@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -250,6 +251,11 @@ func (g *Guard) probeOneCredential(f AuthFile, authDir string, timeout time.Dura
 	}
 
 	client := &http.Client{Timeout: timeout}
+	if cfg := g.Config(); cfg.PatrolProxyURL != "" {
+		if proxyURL, err := url.Parse(cfg.PatrolProxyURL); err == nil {
+			client.Transport = &http.Transport{Proxy: http.ProxyURL(proxyURL)}
+		}
+	}
 	resp, err := client.Do(req)
 	if err != nil {
 		g.patrol.mu.Lock()

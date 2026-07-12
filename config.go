@@ -33,6 +33,7 @@ func configFields() []pluginapi.ConfigField {
 		{Name: "patrol_timeout", Type: pluginapi.ConfigFieldTypeNumber, Description: "单个凭证探测超时(秒,默认15)"},
 		{Name: "patrol_batch_size", Type: pluginapi.ConfigFieldTypeNumber, Description: "每轮巡查上限(0=不限)"},
 		{Name: "patrol_auth_dir", Type: pluginapi.ConfigFieldTypeString, Description: "auth file 所在目录(如 /root/.cli-proxy-api)"},
+		{Name: "patrol_proxy_url", Type: pluginapi.ConfigFieldTypeString, Description: "巡查探测使用的代理(可选,如 socks5://host:port)"},
 	}
 }
 
@@ -134,6 +135,9 @@ func applyConfigMap(cfg *xaiquota.Config, m map[string]any) {
 	}
 	if v, ok := asString(m["patrol_auth_dir"]); ok {
 		cfg.PatrolAuthDir = strings.TrimSpace(v)
+	}
+	if v, ok := asString(m["patrol_proxy_url"]); ok {
+		cfg.PatrolProxyURL = strings.TrimSpace(v)
 	}
 }
 
