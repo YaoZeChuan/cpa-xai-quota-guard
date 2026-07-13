@@ -206,7 +206,7 @@ label > span.lbl{display:block;margin-bottom:.15rem;color:var(--muted);font-size
   </div>
   <div class="card" id="patrolCard">
     <div class="row" style="justify-content:space-between;gap:.5rem;margin-bottom:.35rem">
-      <div><div class="card-title">主动巡查</div><div class="card-desc" id="patrolHint">全量只扫「已启用」；仅复核只扫「程序自动冷却」。并发=系统自适应，界面数值为上限。</div></div>
+      <div><div class="card-title">主动巡查</div><div class="card-desc" id="patrolHint">全量只扫「已启用」；仅复核只扫「程序自动冷却」。并发在用户上限内按负载/探测健康弹性伸缩。</div></div>
     </div>
     <div class="row" style="gap:.6rem;flex-wrap:wrap;align-items:center">
       <label style="display:flex;align-items:center;gap:.3rem;font-size:.85rem">
@@ -222,7 +222,7 @@ label > span.lbl{display:block;margin-bottom:.15rem;color:var(--muted);font-size
         <input id="cfgPatrolInitDelay" type="number" min="0" step="1" style="width:70px" placeholder="60">
       </label>
       <label style="font-size:.85rem">并发上限
-        <input id="cfgPatrolCon" title="最大 worker 数。探测为网络 I/O 密集：默认约 2×CPU，且不会超过此上限" type="number" min="1" step="1" style="width:60px" placeholder="上限 16">
+        <input id="cfgPatrolCon" title="并发硬上限。实际线程在上限内按 load1 与超时/网络错误率弹性伸缩（空闲爬升至上限，压力收缩）" type="number" min="1" step="1" style="width:60px" placeholder="上限16·弹性">
       </label>
       <label style="font-size:.85rem">每轮上限(0=不限·默认)
         <input id="cfgPatrolBatch" type="number" min="0" step="1" style="width:60px" placeholder="0">
@@ -400,7 +400,8 @@ function scheduleStatePoll(){
   STATE_TIMER = setInterval(function(){
     if(!isPageVisible()) return;
     if(LOADING_STATE) return;
-    // during patrol, poll a bit faster via patrolPoll; keep state light
+    // during active patrol, patrolPoll owns status UI; skip full state to cut main-thread jank
+    if(PATROL_POLL) return;
     loadState({soft:true});
   }, STATE_POLL_MS);
 }
@@ -1174,7 +1175,7 @@ async function loadState(opts){
       var curProxy = (document.getElementById("cfgPatrolProxy")||{}).value || "";
       ph.textContent = (PATROL_FORM_DIRTY?"[未保存] ":"") + ((document.getElementById("cfgPatrolEn")||{}).checked ? "定时巡查开":"定时巡查关")
         + " · 周期"+(document.getElementById("cfgPatrolInt").value||Math.round((cfg.patrol_interval||3600)/60)||"?")+"分钟"
-        + " · 并发上限"+(document.getElementById("cfgPatrolCon").value||cfg.patrol_concurrency||"?")
+        + " · 并发上限(弹性)"+(document.getElementById("cfgPatrolCon").value||cfg.patrol_concurrency||"?")
         + " · 模型"+curModel
         + " · 自动换模"+((document.getElementById("cfgPatrolAutoModel")||{}).checked?"开":"关")
         + " · 代理"+(curProxy?"已填":"空")
@@ -1706,7 +1707,19 @@ function paintPatrol(p, r){
   if(prog){ if(hasPatrolData){ prog.hidden=false; prog.style.display=""; } else { prog.hidden=true; prog.style.display="none"; } }
   var st = document.getElementById("patrolStatus");
   var extra = "";
-  if(workers > 0) extra += " · " + workers + "线程";
+  var wMax = Number(p.workers_max||0);
+  var wMin = Number(p.workers_min||0);
+  var load1 = Number(p.load1||0);
+  var scaleR = (p.scale_reason||"").trim();
+  if(workers > 0){
+    if(wMax > 0) extra += " · 实际" + workers + "/" + wMax + "线程";
+    else extra += " · " + workers + "线程";
+    if(wMin > 0 && wMin !== workers) extra += "(min"+wMin+")";
+  }
+  if(p.running && (load1 > 0 || scaleR)){
+    if(load1 > 0) extra += " · load1 " + load1.toFixed(2);
+    if(scaleR) extra += " · " + scaleR;
+  }
   if(candidates > 0) extra += " · 候选 " + candidates;
   if(skipped > 0) extra += " · 跳过 " + skipped;
   if(p.running){
@@ -1774,7 +1787,7 @@ async function patrolSpendingStart(){
     if(!r || !r.ok){ alert("冷却复查启动失败: "+JSON.stringify(r&&r.error||r)); if(btn){btn.disabled=false;btn.textContent="仅复查冷却号";} if(main) main.disabled=false; return; }
     paintPatrol(extractPatrol(r), r);
     if(PATROL_POLL) clearInterval(PATROL_POLL);
-    PATROL_POLL = setInterval(patrolPoll, 2200);
+    PATROL_POLL = setInterval(patrolPoll, 1200);
     patrolPoll();
   } catch(e){
     alert("冷却复查异常: "+(e&&e.message?e.message:e));
@@ -1794,7 +1807,7 @@ async function patrolStart(){
     if(!r || !r.ok){ alert("巡查启动失败: "+JSON.stringify(r&&r.error||r)); btn.disabled=false; btn.textContent="启动巡查"; return; }
     paintPatrol(extractPatrol(r), r);
     if(PATROL_POLL) clearInterval(PATROL_POLL);
-    PATROL_POLL = setInterval(patrolPoll, 2200);
+    PATROL_POLL = setInterval(patrolPoll, 1200);
     patrolPoll();
   } catch(e){
     alert("巡查启动异常: "+(e&&e.message?e.message:e));

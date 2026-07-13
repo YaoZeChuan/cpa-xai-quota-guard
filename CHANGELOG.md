@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.3.3
+
+- **弹性并发**：`patrol_concurrency` 为硬上限；实际 worker 在上限内按 `/proc/loadavg` + 探测超时/网络错误率 1s 伸缩
+  - 空闲/健康：快速爬升至用户上限（I/O 密集，起步约 4×CPU 或上限半数）
+  - 高负载/超时压力：收缩到 min(CPU, 上限)，避免卡死 CPA
+  - status 暴露 `workers` / `workers_max` / `workers_min` / `load1` / `scale_reason`
+- **UI**：巡查状态显示「实际N/上限M · load1 · 伸缩原因」；配置文案标明硬上限+弹性
+- **性能**：巡查进行中跳过全量 state 软轮询（由 patrol/status 1.2s 刷新）；HTTP 连接池按上限扩容复用
+- 补 `maxInt`（修复 0.3.3 WIP 编译）
 ## 0.3.2
 
 - **UI**：巡查进度/探测日志改为按内容展开，去掉固定高度空白；处理日志改 max-height

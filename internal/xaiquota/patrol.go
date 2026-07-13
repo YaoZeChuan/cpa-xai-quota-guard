@@ -1,6 +1,7 @@
 package xaiquota
 
 import (
+	"strconv"
 	"runtime"
 	"fmt"
 	"io"
@@ -56,12 +57,20 @@ type patrolState struct {
 	totalReenabled int
 	byHTTP        map[int]int
 	byAction      map[string]int
-	workers       int
+	workers       int // current elastic target
+	workersMax    int // user hard cap
+	workersMin    int
+	load1         float64
+	scaleReason   string
 	lastError     string
 	lastSweepLog  []patrolLogEntry
 	scope         string
 	stopRequested bool
 	lastPersistMS int64
+	// sliding window for elastic scaling (timeout/error pressure)
+	winTotal    int
+	winTimeout  int
+	winNetErr   int
 }
 
 // patrolLogEntry is an alias of durable PatrolLogEntry.
@@ -86,6 +95,10 @@ type PatrolStatus struct {
 	ByHTTP          map[string]int   `json:"by_http,omitempty"`
 	ByAction        map[string]int   `json:"by_action,omitempty"`
 	Workers         int              `json:"workers"`
+	WorkersMax      int              `json:"workers_max,omitempty"`
+	WorkersMin      int              `json:"workers_min,omitempty"`
+	Load1           float64          `json:"load1,omitempty"`
+	ScaleReason     string           `json:"scale_reason,omitempty"`
 	LastError       string           `json:"last_error,omitempty"`
 	Scope           string           `json:"scope,omitempty"`
 	SavedAtMS       int64            `json:"saved_at_ms,omitempty"`
@@ -245,46 +258,225 @@ type PatrolOptions struct {
 }
 
 
-// resolvePatrolWorkers chooses worker count from system resources, capped by user max.
-// User-configured PatrolConcurrency is a hard upper bound (never exceeded).
-// Patrol probes are network-bound (not CPU-bound), so auto targets ~2x CPU and
-// stays aggressive while still leaving some headroom for the CPA host process.
-func resolvePatrolWorkers(userMax, candidates int) int {
-	max := userMax
-	if max <= 0 {
-		max = 16 // default upper bound when unset
+// clampPatrolUserMax normalizes the user-configured hard upper bound.
+func clampPatrolUserMax(userMax int) int {
+	if userMax <= 0 {
+		return 16
 	}
-	if max > 64 {
-		max = 64
+	if userMax > 64 {
+		return 64
+	}
+	return userMax
+}
+
+func maxInt(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
+}
+
+func minInt(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
+// readLoadAvg1 returns 1-minute load average when /proc/loadavg is available (Linux).
+func readLoadAvg1() (float64, bool) {
+	b, err := os.ReadFile("/proc/loadavg")
+	if err != nil {
+		return 0, false
+	}
+	fields := strings.Fields(string(b))
+	if len(fields) < 1 {
+		return 0, false
+	}
+	v, err := strconv.ParseFloat(fields[0], 64)
+	if err != nil || v < 0 {
+		return 0, false
+	}
+	return v, true
+}
+
+// resolvePatrolWorkers is the initial target: aggressive network-bound start, still <= user max.
+// Elastic controller will climb to userMax when load/probe health allow.
+func resolvePatrolWorkers(userMax, candidates int) int {
+	maxW := clampPatrolUserMax(userMax)
+	ncpu := runtime.NumCPU()
+	if ncpu < 1 {
+		ncpu = 1
+	}
+	// I/O-bound probes: start at max(4×CPU, half of user cap) so sweeps do not crawl at 2–3 workers.
+	auto := ncpu * 4
+	half := maxW / 2
+	if half < ncpu*2 {
+		half = ncpu * 2
+	}
+	if auto < half {
+		auto = half
+	}
+	if auto < 4 && maxW >= 4 {
+		auto = 4
+	}
+	if auto < 2 && maxW >= 2 {
+		auto = 2
+	}
+	if auto > maxW {
+		auto = maxW
+	}
+	if candidates > 0 && auto > candidates {
+		auto = candidates
+	}
+	if auto < 1 {
+		auto = 1
+	}
+	return auto
+}
+
+// elasticPatrolTarget picks concurrency inside [min,max] from live load + recent probe health.
+// Goal: finish the sweep ASAP without wedging the CPA host or drowning the proxy.
+func elasticPatrolTarget(userMax, candidates, cur int, load1 float64, loadOK bool, timeoutRate, netErrRate float64) (target int, reason string) {
+	maxW := clampPatrolUserMax(userMax)
+	if candidates > 0 && maxW > candidates {
+		maxW = candidates
 	}
 	ncpu := runtime.NumCPU()
 	if ncpu < 1 {
 		ncpu = 1
 	}
-	// Network I/O bound: ~2 workers per CPU is a good aggressive default.
-	auto := ncpu * 2
-	// Soft floor: use at least all CPUs on multi-core hosts.
-	if ncpu >= 2 && auto < ncpu {
-		auto = ncpu
+	minW := ncpu
+	if minW < 2 {
+		minW = 2
 	}
-	if auto < 1 {
-		auto = 1
+	if minW > maxW {
+		minW = maxW
 	}
-	// Soft ceiling for auto (user max can still raise further up to 64).
-	if auto > 32 {
-		auto = 32
+	if candidates > 0 && minW > candidates {
+		minW = candidates
 	}
-	w := auto
-	if w > max {
-		w = max
+	if minW < 1 {
+		minW = 1
 	}
-	if candidates > 0 && w > candidates {
-		w = candidates
+
+	base := ncpu * 3
+	reason = "base_3x_cpu"
+	if loadOK {
+		lpc := load1 / float64(ncpu)
+		switch {
+		case lpc >= 1.5:
+			base = ncpu / 2
+			if base < 1 {
+				base = 1
+			}
+			reason = "load_critical"
+		case lpc >= 1.0:
+			base = ncpu
+			reason = "load_high"
+		case lpc >= 0.7:
+			base = ncpu * 2
+			reason = "load_moderate"
+		case lpc >= 0.4:
+			base = ncpu * 4
+			if base < maxW/2 {
+				base = maxW / 2
+			}
+			reason = "load_ok"
+		default:
+			// Host mostly idle: aim at user hard cap immediately.
+			base = maxW
+			reason = "load_idle_max"
+		}
+	} else {
+		base = ncpu * 3
+		reason = "no_loadavg_3x"
 	}
-	if w < 1 {
-		w = 1
+
+	if timeoutRate >= 0.35 || netErrRate >= 0.45 {
+		base = minW
+		reason = "probe_pressure_min"
+	} else if timeoutRate >= 0.18 || netErrRate >= 0.25 {
+		base = minW
+		if ncpu > minW {
+			base = ncpu
+		}
+		if base < minW {
+			base = minW
+		}
+		reason = "probe_pressure_half"
+	} else if timeoutRate < 0.08 && netErrRate < 0.12 && (!loadOK || load1/float64(ncpu) < 0.75) {
+		// Healthy probes: jump toward user max quickly (network I/O bound, not CPU bound).
+		if base < maxW {
+			step := (maxW - base + 1) * 2 / 3
+			if step < ncpu {
+				step = ncpu
+			}
+			if step < 2 {
+				step = 2
+			}
+			base = base + step
+		}
+		if base > maxW {
+			base = maxW
+		}
+		if base >= maxW {
+			reason = reason + "+max"
+		} else {
+			reason = reason + "+climb"
+		}
 	}
-	return w
+
+	if base > maxW {
+		base = maxW
+	}
+	if base < minW {
+		base = minW
+	}
+	if candidates > 0 && base > candidates {
+		base = candidates
+	}
+
+	if cur > 0 {
+		// Allow aggressive ramp-up when climbing toward max.
+		upStep := cur
+		if upStep < ncpu*2 {
+			upStep = ncpu * 2
+		}
+		if upStep < 4 {
+			upStep = 4
+		}
+		up := cur + upStep
+		// Under critical load / probe pressure, shrink hard (no soft floor).
+		hardDown := strings.Contains(reason, "load_critical") || strings.Contains(reason, "probe_pressure")
+		downStep := cur / 2
+		if hardDown {
+			downStep = cur * 3 / 4
+		}
+		if downStep < 1 {
+			downStep = 1
+		}
+		down := cur - downStep
+		if hardDown {
+			// allow dropping straight to computed base/min
+			down = base
+		}
+		if down < minW {
+			down = minW
+		}
+		if base > up {
+			base = up
+			reason += "/smooth_up"
+		}
+		if base < down {
+			base = down
+			reason += "/smooth_down"
+		}
+	}
+	if base < 1 {
+		base = 1
+	}
+	return base, reason
 }
 
 // PatrolSweep iterates auth files with a worker pool, probes upstream, and acts on results.
@@ -392,13 +584,37 @@ func (g *Guard) PatrolSweep(opts PatrolOptions) PatrolStatus {
 		candidates = candidates[:batchLimit]
 	}
 
-	workers := resolvePatrolWorkers(cfg.PatrolConcurrency, len(candidates))
-	g.logf("info", "patrol workers=%d (user_max=%d cpu=%d candidates=%d)", workers, cfg.PatrolConcurrency, runtime.NumCPU(), len(candidates))
+	userMax := clampPatrolUserMax(cfg.PatrolConcurrency)
+	initial := resolvePatrolWorkers(userMax, len(candidates))
+	load1, loadOK := readLoadAvg1()
+	ncpu := runtime.NumCPU()
+	minW := ncpu
+	if minW < 2 {
+		minW = 2
+	}
+	if minW > userMax {
+		minW = userMax
+	}
+	if len(candidates) > 0 && minW > len(candidates) {
+		minW = len(candidates)
+	}
+	if minW < 1 {
+		minW = 1
+	}
 
 	g.patrol.mu.Lock()
 	g.patrol.totalCandidates = len(candidates)
-	g.patrol.workers = workers
+	g.patrol.workers = initial
+	g.patrol.workersMax = userMax
+	g.patrol.workersMin = minW
+	g.patrol.load1 = load1
+	g.patrol.scaleReason = "initial"
+	g.patrol.winTotal = 0
+	g.patrol.winTimeout = 0
+	g.patrol.winNetErr = 0
 	g.patrol.mu.Unlock()
+	g.logf("info", "patrol elastic start workers=%d max=%d min=%d cpu=%d load1=%.2f load_ok=%v candidates=%d",
+		initial, userMax, minW, ncpu, load1, loadOK, len(candidates))
 
 	if len(candidates) == 0 {
 		return g.PatrolStatus()
@@ -409,13 +625,30 @@ func (g *Guard) PatrolSweep(opts PatrolOptions) PatrolStatus {
 		probeTimeout = 10 * time.Second
 	}
 
-	client := g.newPatrolHTTPClient(probeTimeout, cfg.PatrolProxyURL)
+	client := g.newPatrolHTTPClient(probeTimeout, cfg.PatrolProxyURL, userMax)
 
-	jobs := make(chan AuthFile, workers*2)
+	// Elastic permits: spawn up to userMax cheap goroutines; concurrency = #permits in channel.
+	maxW := userMax
+	if maxW > len(candidates) {
+		maxW = len(candidates)
+	}
+	if maxW < 1 {
+		maxW = 1
+	}
+	jobs := make(chan AuthFile, maxW*4)
+	permits := make(chan struct{}, maxW)
+	for i := 0; i < initial && i < maxW; i++ {
+		permits <- struct{}{}
+	}
+	var permitCur int32 = int32(initial)
+	if int(permitCur) > maxW {
+		permitCur = int32(maxW)
+	}
+
 	var wg sync.WaitGroup
 	var stopFlag int32
 
-	// Watch stop request in a light loop via atomic.
+	// Stop watcher.
 	go func() {
 		for {
 			g.patrol.mu.Lock()
@@ -430,7 +663,83 @@ func (g *Guard) PatrolSweep(opts PatrolOptions) PatrolStatus {
 		}
 	}()
 
-	for i := 0; i < workers; i++ {
+	// Elastic controller: re-target concurrency from load + recent probe health.
+	var controllerDone int32
+	go func() {
+		ticker := time.NewTicker(1000 * time.Millisecond)
+		defer ticker.Stop()
+		for {
+			if atomic.LoadInt32(&controllerDone) == 1 || atomic.LoadInt32(&stopFlag) == 1 {
+				return
+			}
+			<-ticker.C
+			if atomic.LoadInt32(&stopFlag) == 1 {
+				return
+			}
+			g.patrol.mu.Lock()
+			tot := g.patrol.winTotal
+			to := g.patrol.winTimeout
+			ne := g.patrol.winNetErr
+			// decay window so old pressure fades
+			g.patrol.winTotal = tot / 2
+			g.patrol.winTimeout = to / 2
+			g.patrol.winNetErr = ne / 2
+			cur := g.patrol.workers
+			g.patrol.mu.Unlock()
+
+			var timeoutRate, netErrRate float64
+			if tot > 0 {
+				timeoutRate = float64(to) / float64(tot)
+				netErrRate = float64(ne) / float64(tot)
+			}
+			l1, ok := readLoadAvg1()
+			desired, reason := elasticPatrolTarget(userMax, len(candidates), cur, l1, ok, timeoutRate, netErrRate)
+			if desired > maxW {
+				desired = maxW
+			}
+			if desired < 1 {
+				desired = 1
+			}
+
+			// Grow / shrink permit tokens.
+			for {
+				c := int(atomic.LoadInt32(&permitCur))
+				if c == desired {
+					break
+				}
+				if c < desired {
+					select {
+					case permits <- struct{}{}:
+						atomic.AddInt32(&permitCur, 1)
+					default:
+						// should not happen with sized channel
+						atomic.StoreInt32(&permitCur, int32(desired))
+						c = desired
+					}
+				} else {
+					select {
+					case <-permits:
+						atomic.AddInt32(&permitCur, -1)
+					case <-time.After(30 * time.Millisecond):
+						// workers hold permits; try again next tick
+						goto publish
+					}
+				}
+			}
+		publish:
+			g.patrol.mu.Lock()
+			g.patrol.workers = int(atomic.LoadInt32(&permitCur))
+			g.patrol.workersMax = userMax
+			g.patrol.workersMin = minW
+			g.patrol.load1 = l1
+			g.patrol.scaleReason = reason
+			g.patrol.mu.Unlock()
+			g.logf("info", "patrol elastic target=%d cur=%d max=%d load1=%.2f to_rate=%.2f net_rate=%.2f reason=%s",
+				desired, atomic.LoadInt32(&permitCur), userMax, l1, timeoutRate, netErrRate, reason)
+		}
+	}()
+
+	for i := 0; i < maxW; i++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
@@ -438,8 +747,31 @@ func (g *Guard) PatrolSweep(opts PatrolOptions) PatrolStatus {
 				if atomic.LoadInt32(&stopFlag) == 1 {
 					return
 				}
+				// acquire elastic permit (may block when scaled down)
+				select {
+				case <-permits:
+				default:
+					// wait until permit or stop
+					for {
+						if atomic.LoadInt32(&stopFlag) == 1 {
+							return
+						}
+						select {
+						case <-permits:
+							goto got
+						case <-time.After(50 * time.Millisecond):
+						}
+					}
+				}
+			got:
 				result := g.probeOneCredential(f, authDir, client)
 				g.recordProbeResult(result)
+				// release permit (keep pool size = permitCur)
+				select {
+				case permits <- struct{}{}:
+				default:
+					// if controller shrank capacity, drop token
+				}
 			}
 		}()
 	}
@@ -452,6 +784,7 @@ func (g *Guard) PatrolSweep(opts PatrolOptions) PatrolStatus {
 	}
 	close(jobs)
 	wg.Wait()
+	atomic.StoreInt32(&controllerDone, 1)
 
 	return g.PatrolStatus()
 }
@@ -471,8 +804,18 @@ type patrolHTTP struct {
 	timeout  time.Duration
 }
 
-func (g *Guard) newPatrolHTTPClient(timeout time.Duration, proxyURL string) *http.Client {
+func (g *Guard) newPatrolHTTPClient(timeout time.Duration, proxyURL string, maxConns ...int) *http.Client {
 	proxyURL = strings.TrimSpace(proxyURL)
+	mc := 64
+	if len(maxConns) > 0 && maxConns[0] > 0 {
+		mc = maxConns[0]
+		if mc < 16 {
+			mc = 16
+		}
+		if mc > 128 {
+			mc = 128
+		}
+	}
 	// Reuse shared client when proxy+timeout match.
 	g.patrolHTTP.mu.Lock()
 	defer g.patrolHTTP.mu.Unlock()
@@ -480,10 +823,12 @@ func (g *Guard) newPatrolHTTPClient(timeout time.Duration, proxyURL string) *htt
 		return g.patrolHTTP.client
 	}
 	tr := &http.Transport{
-		MaxIdleConns:          128,
-		MaxIdleConnsPerHost:   64,
+		MaxIdleConns:          maxInt(128, mc*2),
+		MaxIdleConnsPerHost:   mc,
+		MaxConnsPerHost:       mc,
 		IdleConnTimeout:       90 * time.Second,
-		TLSHandshakeTimeout:   15 * time.Second,
+		TLSHandshakeTimeout:   12 * time.Second,
+		ResponseHeaderTimeout: timeout,
 		ExpectContinueTimeout: 1 * time.Second,
 		ForceAttemptHTTP2:     true,
 	}
@@ -516,6 +861,16 @@ func (g *Guard) InvalidatePatrolHTTP() {
 func (g *Guard) recordProbeResult(r probeResult) {
 	g.patrol.mu.Lock()
 	g.patrol.totalProbed++
+	g.patrol.winTotal++
+	if r.httpCode == -1 {
+		g.patrol.winTimeout++
+	}
+	if r.httpCode <= -2 || r.httpCode == 0 {
+		// synthetic net buckets / unknown transport
+		if r.httpCode != -1 {
+			g.patrol.winNetErr++
+		}
+	}
 	if g.patrol.byHTTP == nil {
 		g.patrol.byHTTP = map[int]int{}
 	}
@@ -1120,6 +1475,10 @@ func (g *Guard) PatrolStatus() PatrolStatus {
 		ByHTTP:          byHTTP,
 		ByAction:        byAction,
 		Workers:         g.patrol.workers,
+		WorkersMax:      g.patrol.workersMax,
+		WorkersMin:      g.patrol.workersMin,
+		Load1:           g.patrol.load1,
+		ScaleReason:     g.patrol.scaleReason,
 		LastError:       g.patrol.lastError,
 		Scope:           g.patrol.scope,
 		RecentLog:       log,

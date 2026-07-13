@@ -35,7 +35,7 @@ func configFields() []pluginapi.ConfigField {
 		{Name: "patrol_batch_size", Type: pluginapi.ConfigFieldTypeNumber, Description: "每轮巡查上限(0=不限)"},
 		{Name: "patrol_auth_dir", Type: pluginapi.ConfigFieldTypeString, Description: "auth file 所在目录(如 /root/.cli-proxy-api)"},
 		{Name: "patrol_proxy_url", Type: pluginapi.ConfigFieldTypeString, Description: "巡查探测使用的代理(可选,如 socks5://host:port)"},
-		{Name: "patrol_concurrency", Type: pluginapi.ConfigFieldTypeNumber, Description: "巡查并发线程数(默认8)"},
+		{Name: "patrol_concurrency", Type: pluginapi.ConfigFieldTypeNumber, Description: "巡查并发硬上限(默认16；实际线程在上限内按负载/探测健康弹性伸缩)"},
 		{Name: "patrol_model", Type: pluginapi.ConfigFieldTypeString, Description: "巡查主探测模型(默认 grok-4.5)"},
 		{Name: "patrol_auto_model_switch", Type: pluginapi.ConfigFieldTypeBoolean, Description: "402 时自动拉取凭证 /models 并切换备用模型再测(默认关；关则仅用 patrol_model，仍 402 则冷却禁用)"},
 		{Name: "patrol_initial_delay_sec", Type: pluginapi.ConfigFieldTypeNumber, Description: "定时巡查启动后首轮延迟(秒,默认60；0=随首次 tick 立即可能触发)"},
