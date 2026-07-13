@@ -39,34 +39,28 @@ jobs:
             goos: linux
             goarch: amd64
             ext: .so
-            zip_name: cpa-xai-quota-guard_linux_amd64
           - os: ubuntu-latest
             goos: linux
             goarch: arm64
             ext: .so
-            zip_name: cpa-xai-quota-guard_linux_arm64
             cc: aarch64-linux-gnu-gcc
             install_cc: sudo apt-get update && sudo apt-get install -y gcc-aarch64-linux-gnu
           - os: macos-latest
             goos: darwin
             goarch: amd64
             ext: .dylib
-            zip_name: cpa-xai-quota-guard_darwin_amd64
           - os: macos-latest
             goos: darwin
             goarch: arm64
             ext: .dylib
-            zip_name: cpa-xai-quota-guard_darwin_arm64
           - os: windows-latest
             goos: windows
             goarch: amd64
             ext: .dll
-            zip_name: cpa-xai-quota-guard_windows_amd64
           - os: windows-latest
             goos: windows
             goarch: arm64
             ext: .dll
-            zip_name: cpa-xai-quota-guard_windows_arm64
 
     steps:
       - uses: actions/checkout@v4
@@ -79,6 +73,20 @@ jobs:
       - name: Install cross compiler (linux/arm64)
         if: matrix.install_cc != ''
         run: ${{ matrix.install_cc }}
+
+      - name: Resolve package name
+        id: package_meta
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
+            PACKAGE_TAG="${GITHUB_REF_NAME}"
+          else
+            PACKAGE_TAG="snapshot-${GITHUB_SHA::7}"
+          fi
+          ZIP_NAME="cpa-xai-quota-guard_${PACKAGE_TAG}_${{ matrix.goos }}_${{ matrix.goarch }}"
+          echo "package_tag=${PACKAGE_TAG}" >> "$GITHUB_OUTPUT"
+          echo "zip_name=${ZIP_NAME}" >> "$GITHUB_OUTPUT"
 
       - name: Fetch CLIProxyAPI SDK source
         shell: bash
@@ -95,6 +103,7 @@ jobs:
           GOARCH: ${{ matrix.goarch }}
           CGO_ENABLED: '1'
           CC: ${{ matrix.cc }}
+          ZIP_NAME: ${{ steps.package_meta.outputs.zip_name }}
         run: |
           set -euo pipefail
           mkdir -p bin dist
@@ -120,10 +129,10 @@ jobs:
           (
             cd dist/stage
             if command -v zip >/dev/null 2>&1; then
-              zip -r "../${{ matrix.zip_name }}.zip" "${{ matrix.goos }}"
+              zip -r "../${ZIP_NAME}.zip" "${{ matrix.goos }}"
             else
               # Windows runners: use PowerShell Compress-Archive via bash fallback
-              powershell.exe -NoProfile -Command "Compress-Archive -Path '${{ matrix.goos }}' -DestinationPath '../${{ matrix.zip_name }}.zip' -Force" || true
+              powershell.exe -NoProfile -Command "Compress-Archive -Path '${{ matrix.goos }}' -DestinationPath '../${ZIP_NAME}.zip' -Force" || true
             fi
           )
           ls -la dist || true
@@ -139,8 +148,8 @@ jobs:
       - name: Upload zip package
         uses: actions/upload-artifact@v4
         with:
-          name: zip-${{ matrix.zip_name }}
-          path: dist/${{ matrix.zip_name }}.zip
+          name: zip-${{ steps.package_meta.outputs.zip_name }}
+          path: dist/${{ steps.package_meta.outputs.zip_name }}.zip
           if-no-files-found: warn
           retention-days: 30
 
