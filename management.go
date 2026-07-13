@@ -14,10 +14,14 @@ import (
 )
 
 //go:embed web/console.html
-var consoleHTML []byte
+var consoleFS embed.FS
 
 func renderConsole() []byte {
-	return consoleHTML
+	b, err := consoleFS.ReadFile("web/console.html")
+	if err != nil {
+		return []byte("<html><body>console missing</body></html>")
+	}
+	return b
 }
 
 // managementRequest mirrors the request the host delivers to management.handle.
