@@ -176,7 +176,7 @@ jobs:
         run: |
           set -euo pipefail
           cd release-assets
-          sha256sum ./*.zip > checksums.txt
+          sha256sum *.zip > checksums.txt
           cat checksums.txt
       - name: Create / update Release
         uses: softprops/action-gh-release@v2
