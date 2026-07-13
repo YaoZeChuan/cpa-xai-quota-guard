@@ -170,9 +170,19 @@ jobs:
           merge-multiple: true
       - name: List assets
         run: find release-assets -type f -print
+
+      - name: Generate checksums
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd release-assets
+          sha256sum ./*.zip > checksums.txt
+          cat checksums.txt
       - name: Create / update Release
         uses: softprops/action-gh-release@v2
         with:
-          files: release-assets/**/*.zip
+          files: |
+            release-assets/**/*.zip
+            release-assets/checksums.txt
           generate_release_notes: true
           fail_on_unmatched_files: false
