@@ -1,11 +1,11 @@
 # cpa-xai-quota-guard
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
-[![Version](https://img.shields.io/badge/version-0.3.1-blue.svg)](./CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.3.2-blue.svg)](./CHANGELOG.md)
 [![CI](https://github.com/Mortal520/cpa-xai-quota-guard/actions/workflows/build.yml/badge.svg)](https://github.com/Mortal520/cpa-xai-quota-guard/actions/workflows/build.yml)
 [![Release](https://img.shields.io/github/v/release/Mortal520/cpa-xai-quota-guard?include_prereleases)](https://github.com/Mortal520/cpa-xai-quota-guard/releases)
 
-CLIProxyAPI **原生 Go 插件**（当前版本 **0.3.1**）：仅针对 **xAI** 登录凭证做额度/死号管控、主动巡查、管理 UI 与用量统计。
+CLIProxyAPI **原生 Go 插件**（当前版本 **0.3.2**）：仅针对 **xAI** 登录凭证做额度/死号管控、主动巡查、管理 UI 与用量统计。
 
 
 ## 界面预览

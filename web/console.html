@@ -50,7 +50,7 @@ body{padding:.75rem}
 
 .row button,.row .btn{flex:1 1 auto}
 .acc-table-wrap{height:min(60vh,520px);max-height:min(60vh,520px)}
-#actionLogBox,#patrolLog > div{height:220px}
+#actionLogBox,#patrolLogBox{max-height:220px}
 h1{font-size:1.1rem}
 input,select,button{font-size:.86rem}
 }
@@ -129,14 +129,24 @@ table.acc tbody td{padding:.65rem .55rem}
 .acc-dot.bad{background:var(--err)}
 .acc-dot.manual{background:#a78bfa}
 .acc-pill-row{display:flex;flex-wrap:wrap;gap:.28rem;margin-top:.28rem}
-#actionLogBox{height:240px}
-#patrolLog > div{height:200px}
+#actionLogBox{max-height:240px;min-height:0}
+#patrolLogBox{max-height:200px;min-height:0}
 .hint{color:var(--muted);font-size:.78rem;line-height:1.4}
 .toolbar-quiet button{background:transparent}
 .field-hint{display:block;color:var(--muted);font-size:.72rem;margin-top:.15rem}
 label > span.lbl{display:block;margin-bottom:.15rem;color:var(--muted);font-size:.78rem}
 .card > .card-title{font-weight:650;margin:0 0 .35rem;font-size:.98rem}
 .card > .card-desc{color:var(--muted);font-size:.78rem;margin:0 0 .65rem;line-height:1.4}
+.log-panel{margin-top:.55rem}
+.log-panel[hidden],.prog-panel[hidden]{display:none!important}
+.log-scroll{max-height:200px;overflow-y:auto;font-size:.78rem;border:1px solid var(--border);border-radius:8px;background:var(--card)}
+#actionLogBox.log-scroll{max-height:240px}
+.grid{gap:.75rem}
+#patrolCard .card-desc{margin-bottom:.45rem}
+#patrolHttpStats:empty{display:none}
+#patrolHttpStats{min-height:0!important}
+#patrolErrBreak:empty{display:none}
+
 
 </style></head><body><div class="wrap">
 <div class="topbar">
@@ -212,7 +222,7 @@ label > span.lbl{display:block;margin-bottom:.15rem;color:var(--muted);font-size
         <input id="cfgPatrolInitDelay" type="number" min="0" step="1" style="width:70px" placeholder="60">
       </label>
       <label style="font-size:.85rem">并发上限
-        <input id="cfgPatrolCon" title="最大 worker 数；实际并发按 CPU 自动下调，不会超过此值" type="number" min="1" step="1" style="width:60px" placeholder="上限 8">
+        <input id="cfgPatrolCon" title="最大 worker 数。探测为网络 I/O 密集：默认约 2×CPU，且不会超过此上限" type="number" min="1" step="1" style="width:60px" placeholder="上限 16">
       </label>
       <label style="font-size:.85rem">每轮上限(0=不限·默认)
         <input id="cfgPatrolBatch" type="number" min="0" step="1" style="width:60px" placeholder="0">
@@ -247,11 +257,11 @@ label > span.lbl{display:block;margin-bottom:.15rem;color:var(--muted);font-size
       <button id="patrolStopBtn" class="off" onclick="patrolStop()" style="display:none">停止巡查</button>
       <span id="patrolStatus" class="muted" style="font-size:.82rem">空闲</span>
     </div>
-    <div id="patrolProgress" style="margin-top:.6rem;display:none">
-      <div style="background:var(--soft);border-radius:6px;height:.5rem;overflow:hidden">
+    <div id="patrolProgress" class="prog-panel" hidden>
+      <div style="background:var(--soft);border-radius:6px;height:.5rem;overflow:hidden;margin-top:.5rem">
         <div id="patrolBar" style="background:var(--accent);height:100%;width:0%;transition:width .3s"></div>
       </div>
-      <div id="patrolSummaryLine" class="row" style="margin-top:.4rem;gap:.55rem;font-size:.8rem;flex-wrap:wrap;align-items:center">
+      <div id="patrolSummaryLine" class="row" style="margin-top:.35rem;gap:.45rem;font-size:.8rem;flex-wrap:wrap;align-items:center">
         <span>已探测: <b id="patrolProbed">0</b></span>
         <span style="color:var(--ok)">存活: <b id="patrolAlive">0</b></span>
         <span style="color:var(--err)">删除: <b id="patrolDeleted">0</b></span>
@@ -260,14 +270,14 @@ label > span.lbl{display:block;margin-bottom:.15rem;color:var(--muted);font-size
         <span style="color:var(--warn)">异常: <b id="patrolErrors">0</b></span>
         <span class="muted" id="patrolErrBreak" style="font-size:.76rem"></span>
       </div>
-      <div id="patrolHttpStats" class="row" style="margin-top:.35rem;gap:.35rem;flex-wrap:wrap;font-size:.76rem;min-height:1.4em"></div>
+      <div id="patrolHttpStats" class="row" style="margin-top:.3rem;gap:.3rem;flex-wrap:wrap;font-size:.76rem"></div>
     </div>
-    <div id="patrolLog" style="margin-top:.7rem;display:none">
-      <div style="font-weight:600;margin-bottom:.3rem;font-size:.82rem;color:var(--muted)">巡查探测日志</div>
-      <div style="height:220px;overflow-y:auto;font-size:.78rem;border:1px solid var(--border);border-radius:8px;background:var(--card,#fff)">
+    <div id="patrolLog" class="log-panel" hidden>
+      <div style="font-weight:600;margin-bottom:.25rem;font-size:.8rem;color:var(--muted)">巡查探测日志 <span class="muted" id="patrolLogCount" style="font-weight:400"></span></div>
+      <div id="patrolLogBox" class="log-scroll">
         <table style="width:100%;border-collapse:collapse;table-layout:fixed">
-          <thead><tr style="text-align:left;color:var(--muted);border-bottom:1px solid var(--border);position:sticky;top:0;background:var(--card,#fff)">
-            <th style="padding:.25rem;width:24%">时间</th><th style="width:22%">账号</th><th style="width:12%">动作</th><th style="width:10%">HTTP</th><th>原因</th>
+          <thead><tr style="text-align:left;color:var(--muted);border-bottom:1px solid var(--border);position:sticky;top:0;background:var(--card)">
+            <th style="padding:.25rem;width:22%">时间</th><th style="width:22%">账号</th><th style="width:12%">动作</th><th style="width:10%">HTTP</th><th>原因</th>
           </tr></thead>
           <tbody id="patrolLogBody"></tbody>
         </table>
@@ -297,7 +307,7 @@ label > span.lbl{display:block;margin-bottom:.15rem;color:var(--muted);font-size
       <input id="logSearch" placeholder="搜账号/说明/auth" oninput="onActionLogFilter()" style="flex:1;min-width:160px">
       <span class="muted" id="logFilterInfo" style="font-size:.76rem">—</span>
     </div>
-    <div id="actionLogBox" style="height:280px;overflow-y:auto;font-size:.78rem;border:1px solid var(--border);border-radius:8px;background:var(--card,#fff)">
+    <div id="actionLogBox" class="log-scroll">
       <table style="width:100%;border-collapse:collapse;table-layout:fixed">
         <thead><tr style="text-align:left;color:var(--muted);border-bottom:1px solid var(--border);position:sticky;top:0;background:var(--card,#fff)">
           <th style="padding:.25rem;width:20%">时间</th>
@@ -1141,7 +1151,7 @@ async function loadState(opts){
       var elDelay = document.getElementById("cfgPatrolInitDelay");
       if(elDelay) elDelay.value = (cfg.patrol_initial_delay_sec!=null?cfg.patrol_initial_delay_sec:60);
         document.getElementById("cfgPatrolDir").value = cfg.patrol_auth_dir || "";
-        document.getElementById("cfgPatrolCon").value = cfg.patrol_concurrency || 8;
+        document.getElementById("cfgPatrolCon").value = cfg.patrol_concurrency || 16;
         document.getElementById("cfgPatrolBatch").value = (cfg.patrol_batch_size != null ? cfg.patrol_batch_size : 0);
         var pm = (window._PATROL_UI_MODEL || cfg.patrol_model || "grok-4.5");
         // force-reload uses server; normal first fill prefers server unless UI memory exists from same page session
@@ -1348,7 +1358,7 @@ async function savePatrolConfig(){
       patrol_initial_delay_sec: Math.max(0, Number((document.getElementById("cfgPatrolInitDelay")||{}).value)||0),
     patrol_auth_dir: document.getElementById("cfgPatrolDir").value.trim(),
     patrol_proxy_url: document.getElementById("cfgPatrolProxy").value.trim(),
-    patrol_concurrency: Number(document.getElementById("cfgPatrolCon").value)||8,
+    patrol_concurrency: Number(document.getElementById("cfgPatrolCon").value)||16,
     patrol_batch_size: Number(document.getElementById("cfgPatrolBatch").value)||0,
     patrol_model: (document.getElementById("cfgPatrolModel").value||"").trim()||"grok-4.5",
     patrol_auto_model_switch: document.getElementById("cfgPatrolAutoModel").checked
@@ -1635,8 +1645,8 @@ function extractPatrol(r){
 }
 function paintPatrol(p, r){
   if(!p) return;
-  document.getElementById("patrolProgress").style.display = "";
-  document.getElementById("patrolLog").style.display = "";
+  var prog = document.getElementById("patrolProgress");
+  var logWrap = document.getElementById("patrolLog");
   var probed = Number(p.total_probed||0);
   var alive = Number(p.total_alive||0);
   var deleted = Number(p.total_deleted||0);
@@ -1691,6 +1701,9 @@ function paintPatrol(p, r){
   var denom = candidates > 0 ? candidates : (probed || 1);
   var pct = Math.min(100, Math.round(probed / denom * 100));
   document.getElementById("patrolBar").style.width = pct + "%";
+  // Show progress when running or has any result; avoid empty fixed-height blanks.
+  var hasPatrolData = !!(p.running || probed>0 || p.started_at_ms || p.completed_at_ms || p.last_error);
+  if(prog){ if(hasPatrolData){ prog.hidden=false; prog.style.display=""; } else { prog.hidden=true; prog.style.display="none"; } }
   var st = document.getElementById("patrolStatus");
   var extra = "";
   if(workers > 0) extra += " · " + workers + "线程";
@@ -1702,6 +1715,7 @@ function paintPatrol(p, r){
     document.getElementById("patrolBtn").textContent = "巡查中...";
     document.getElementById("patrolBtn").disabled = true;
     document.getElementById("patrolStopBtn").style.display = "";
+  var pp0=document.getElementById("patrolProgress"); if(pp0){ pp0.hidden=false; pp0.style.display=""; }
   } else {
     var err = p.last_error ? (" · 错误: " + p.last_error) : "";
     var scope = p.scope ? (" · 范围 " + (p.scope==="spending_only"?"冷却复核":"全量启用")) : "";
@@ -1718,20 +1732,31 @@ function paintPatrol(p, r){
   }
   var log = p.recent_log || [];
   var tbody = document.getElementById("patrolLogBody");
+  var logWrap = document.getElementById("patrolLog");
+  var logCount = document.getElementById("patrolLogCount");
+  if(logWrap){
+    if(log.length){ logWrap.hidden=false; logWrap.style.display=""; }
+    else { logWrap.hidden=true; logWrap.style.display="none"; }
+  }
+  if(logCount){ logCount.textContent = log.length ? ("· "+log.length+" 条") : ""; }
   var logFp = log.map(function(e){ return (e.auth_index||"")+":"+(e.time_ms||0)+":"+(e.action||"")+":"+(e.http_code||""); }).join("|");
-  if(logFp !== (window._PATROL_LOG_FP||"")){
+  if(tbody && logFp !== (window._PATROL_LOG_FP||"")){
     window._PATROL_LOG_FP = logFp;
-    tbody.innerHTML = (log.length>40?log.slice(-40):log).map(function(e){
-      var act=e.action||"";
-      var color = act==="deleted" ? "var(--err)" : (act==="alive") ? "var(--ok)" : act==="reenabled" ? "var(--accent)" : (act==="cooldown"||act==="cooldown_skip") ? "var(--accent)" : "var(--warn)";
-      return '<tr style="border-bottom:1px solid #f1f5f9">' +
-        '<td style="padding:.2rem;white-space:nowrap">'+fmtTime(e.time_ms)+'</td>' +
-        '<td style="max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(e.account||e.file_name||e.auth_index||"?")+'</td>' +
-        '<td style="color:'+color+';font-weight:600;white-space:nowrap">'+esc(patrolActionLabel(e.action))+'</td>' +
-        '<td>'+(e.http_code||"-")+'</td>' +
-        '<td style="color:var(--muted);max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(e.reason||"")+'</td>' +
-      '</tr>';
-    }).join("");
+    if(!log.length){
+      tbody.innerHTML = "";
+    } else {
+      tbody.innerHTML = (log.length>40?log.slice(-40):log).map(function(e){
+        var act=e.action||"";
+        var color = act==="deleted" ? "var(--err)" : (act==="alive") ? "var(--ok)" : act==="reenabled" ? "var(--accent)" : (act==="cooldown"||act==="cooldown_skip") ? "var(--accent)" : "var(--warn)";
+        return '<tr style="border-bottom:1px solid var(--soft)">' +
+          '<td style="padding:.2rem;white-space:nowrap">'+fmtTime(e.time_ms)+'</td>' +
+          '<td style="max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(e.account||e.file_name||e.auth_index||"?")+'</td>' +
+          '<td style="color:'+color+';font-weight:600;white-space:nowrap">'+esc(patrolActionLabel(e.action))+'</td>' +
+          '<td>'+(e.http_code||"-")+'</td>' +
+          '<td style="color:var(--muted);max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(e.reason||"")+'</td>' +
+        '</tr>';
+      }).join("");
+    }
   }
   // delete history intentionally not updated from patrol poll (stable UI)
 }
@@ -1741,9 +1766,9 @@ async function patrolSpendingStart(){
   if(btn){ btn.disabled = true; btn.textContent = "复查中..."; }
   if(main) main.disabled = true;
   document.getElementById("patrolStopBtn").style.display = "";
-  document.getElementById("patrolProgress").style.display = "";
-  document.getElementById("patrolLog").style.display = "";
-  document.getElementById("patrolStatus").textContent = "启动 spending 复查...";
+  var pp0=document.getElementById("patrolProgress"); if(pp0){ pp0.hidden=false; pp0.style.display=""; }
+  var pp=document.getElementById("patrolProgress"); if(pp){ pp.hidden=false; pp.style.display=""; }
+  document.getElementById("patrolStatus").textContent = "启动冷却复核...";
   try {
     var r = await api("patrol/spending", {method:"POST"});
     if(!r || !r.ok){ alert("冷却复查启动失败: "+JSON.stringify(r&&r.error||r)); if(btn){btn.disabled=false;btn.textContent="仅复查冷却号";} if(main) main.disabled=false; return; }
@@ -1762,8 +1787,7 @@ async function patrolStart(){
   btn.disabled = true;
   btn.textContent = "巡查中...";
   document.getElementById("patrolStopBtn").style.display = "";
-  document.getElementById("patrolProgress").style.display = "";
-  document.getElementById("patrolLog").style.display = "";
+  var pp0=document.getElementById("patrolProgress"); if(pp0){ pp0.hidden=false; pp0.style.display=""; }
   document.getElementById("patrolStatus").textContent = "启动中...";
   try {
     var r = await api("patrol", {method:"POST"});

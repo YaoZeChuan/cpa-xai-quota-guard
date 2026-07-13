@@ -247,10 +247,12 @@ type PatrolOptions struct {
 
 // resolvePatrolWorkers chooses worker count from system resources, capped by user max.
 // User-configured PatrolConcurrency is a hard upper bound (never exceeded).
+// Patrol probes are network-bound (not CPU-bound), so auto targets ~2x CPU and
+// stays aggressive while still leaving some headroom for the CPA host process.
 func resolvePatrolWorkers(userMax, candidates int) int {
 	max := userMax
 	if max <= 0 {
-		max = 8
+		max = 16 // default upper bound when unset
 	}
 	if max > 64 {
 		max = 64
@@ -259,17 +261,18 @@ func resolvePatrolWorkers(userMax, candidates int) int {
 	if ncpu < 1 {
 		ncpu = 1
 	}
-	// Leave headroom for host process: prefer ~75% of CPUs, min 1, soft floor 2 on multi-core.
-	auto := (ncpu*3 + 3) / 4
+	// Network I/O bound: ~2 workers per CPU is a good aggressive default.
+	auto := ncpu * 2
+	// Soft floor: use at least all CPUs on multi-core hosts.
+	if ncpu >= 2 && auto < ncpu {
+		auto = ncpu
+	}
 	if auto < 1 {
 		auto = 1
 	}
-	if ncpu >= 2 && auto < 2 {
-		auto = 2
-	}
-	// On very large hosts, still keep auto modest unless user raises max.
-	if auto > 16 {
-		auto = 16
+	// Soft ceiling for auto (user max can still raise further up to 64).
+	if auto > 32 {
+		auto = 32
 	}
 	w := auto
 	if w > max {
