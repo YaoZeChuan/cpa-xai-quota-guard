@@ -59,3 +59,8 @@ dist/
 # generated docs render
 docs/screenshots/_render_demo.html
 
+
+# local task recovery
+TASK_STATE.md
+TASK_ARCHIVE.md
+

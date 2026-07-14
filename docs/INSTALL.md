@@ -21,6 +21,9 @@
 > 2. zip 内动态库位于**根目录**（不能是 `linux/amd64/...` 嵌套路径）
 > 3. 同 Release 必须附带 `checksums.txt`（sha256）
 
+> **当前 v0.3.10 已发布资产**：`linux_amd64` / `linux_arm64` / `darwin_amd64` / `darwin_arm64` / `windows_amd64` + `checksums.txt`。`windows_arm64` 可能因工具链缺席未发布，请用手动编译或后续 CI 补齐。
+
+
 CPA 加载目录约定：
 
 ```text

@@ -12,6 +12,7 @@
   - 去掉「浅色行样式写在深色规则之后」的覆盖问题
   - @media (prefers-color-scheme: dark) 在 JS 前预置深色 token，减少白闪
   - 主题检测增强（parent 亮度采样 + data-theme/class + 系统偏好）
+
 ## 0.3.9
 
 - **中止释放**：网络闸门/手动停止时 `context.Cancel` 取消在途探测 HTTP，worker 立即退出，不再卡到超时
@@ -26,15 +27,7 @@
   - 不把 401/403/429/402 等业务错误算作网络连续失败
 - **UI**：中止时状态行红色「已中止 · 网络/代理异常」+ 详情文案
 
-## 0.3.8
-
-- **巡查网络闸门**：连续 ≥6 次传输层网络失败（超时/DNS/TLS/连接等）后，自动检测**公网**与**巡查代理**连通性
-  - 公网或代理任一侧异常 → **中止本轮巡查**，`last_error` 写明原因，处理日志记 `patrol_abort_net`
-  - 两侧均正常 → 继续巡查，连续计数清零（可再次触发复检）
-  - 不把 401/403/429/402 等业务错误算作网络连续失败
-- **UI**：中止时状态行红色「已中止 · 网络/代理异常」+ 详情文案
-
-0.3.7
+## 0.3.7
 
 - **修复** `PATROL_POLL is not defined`：补全局声明；启动巡查不再弹窗中断
 - **修复** 配置项（并发上限/代理等）不回填：`loadState` 在 patrol 跟随时抛错导致表单填充中断；增加空字段恢复填充
@@ -51,6 +44,7 @@
 - **定时巡查实时跟随**：自动探测 `patrol/status`，定时扫启动后无需手动整页刷新
 - **账号状态 UI**：行底渐变、原因主/副文案、恢复倒计时样式、隐藏 CPA成功0
 - **文档截图**：`docs/screenshots/*.png` 脱敏真实页
+
 ## 0.3.4
 
 - **巡查 status 瘦身**：默认 `recent_log` 最多 50 条，**优先非存活**（冷却/删除/异常），避免 126KB 轮询卡 UI
@@ -58,6 +52,7 @@
 - **完成态**：状态行显示耗时、速率( /s )、预计剩余
 - **默认并发上限** 16 → **24**（仍为硬上限，弹性在上限内伸缩）
 - `state` 内嵌 patrol 同步截断日志，降低管理页加载体积
+
 ## 0.3.3
 
 - **弹性并发**：`patrol_concurrency` 为硬上限；实际 worker 在上限内按 `/proc/loadavg` + 探测超时/网络错误率 1s 伸缩
@@ -67,6 +62,7 @@
 - **UI**：巡查状态显示「实际N/上限M · load1 · 伸缩原因」；配置文案标明硬上限+弹性
 - **性能**：巡查进行中跳过全量 state 软轮询（由 patrol/status 1.2s 刷新）；HTTP 连接池按上限扩容复用
 - 补 `maxInt`（修复 0.3.3 WIP 编译）
+
 ## 0.3.2
 
 - **UI**：巡查进度/探测日志改为按内容展开，去掉固定高度空白；处理日志改 max-height
@@ -186,35 +182,41 @@
 - 审查：被动 HandleUsage 冷却/删除矩阵未改坏（region 不删、401/403 删、429/402 冷却、manual 保护、Tick 恢复）
 - 新增 **被动处理日志** 卡片（`action_history` 持久化：cooldown/delete/recover/skip_*）
 - 账号状态表：`max-height` 固定可视区 + 默认 30/页 + `auth_index` 去重 + 同页指纹跳过重复 DOM 重写，避免无效叠加/无限变长
+
 ## 0.2.11
 
 - **探测模型不再自动回退默认**
 - 去掉 loadState 首次填充后自动 `refreshPatrolModels`（重建 select 会把选项打回 free/首项）
 - 手动刷新模型：await 后重读当前选择；dirty 时绝对保留用户模型；当前项置顶写入 options
 - 记住 `_PATROL_UI_MODEL` / `_PATROL_UI_PROXY`，避免同页刷新列表时丢失
+
 ## 0.2.10
 
 - **代理输入框不再被 15s loadState 自动回写**
 - 根因：表单条件写成 `!dirty || !applied`，未编辑时每次轮询都会用服务端值覆盖输入
 - 现仅：首次进入页填充一次；点「刷新」且确认后可强制同步；保存成功用接口回显
 - dirty 绑定在 init 即生效
+
 ## 0.2.9
 
 - **巡查 429 free-usage**：启用账号探测到短时额度 429 → `plugin_auto` 冷却（与 HandleUsage 一致），**绝不删除**
 - 402 spending 冷却号遇 429/200 仍自动恢复启用
 - 未识别信号的 429 记 error（不存活、不删）
 - 修正 probe 模型循环内 region 分支缩进/结构可读性
+
 ## 0.2.8
 
 - **表单稳定**：巡查配置 dirty 标记；loadState 15s 轮询不再覆盖未保存的模型/代理/上限
 - **刷新模型列表**：保留当前 UI 选择（不再强制回 patrol_model/grok-4.5-build-free）；按钮 loading 反馈；超时 45s
 - **代理**：保存后按服务端回显；清空也写回；编辑中不被定时刷新抹掉
 - **每轮上限**：patrol_batch_size=0 为不限且可从配置正确落盘（>=0 解析）
+
 ## 0.2.7
 
 - 巡查探测优先 `POST {base}/responses`（对齐 CPA `xai_executor`），body: `input` + `max_output_tokens`
 - `/responses` 返回 404/405 时回退 `POST /chat/completions`
 - 保留 0.2.6 错误矩阵（region/404 不删；402 冷却；真 403/401 删）
+
 ## 0.2.6
 
 - **紧急**：`permission-denied` + `not available in your region` **不删除**凭证（IP/区域）
@@ -226,6 +228,7 @@
 - 巡查配置：`patrol_auto_model_switch` 随保存持久化
 - 编译修复：`listModels` 局部变量 `any` 与内置类型冲突 → `rawObj`
 - 路线图：docs/ROADMAP_0.3.md
+
 ## 0.2.5
 
 - **402 spending-limit 工作流完善**
@@ -250,6 +253,7 @@
 - 与 429 free-usage 区分：不同 Match 路径、Reason/Signal 不同
 - 巡查会纳入 spending_limit 冷却账号并探测；200/429 视为可恢复并自动启用
 - 403/401 仍删除；IsSpendingLimit 仅接受 HTTP 402/0
+
 ## 0.2.1
 
 - 配置写回：UI 开关/巡查配置 `GET+merge+PUT` 持久化到 CPA plugin config
