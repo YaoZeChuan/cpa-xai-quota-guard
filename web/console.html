@@ -3,13 +3,82 @@
 <title>xAI Quota Guard</title>
 <style>
 :root,:root[data-theme="light"]{
---bg:#f4f7fb;--card:#fff;--card2:#f8fafc;--text:#0f172a;--muted:#64748b;--accent:#0d9488;--accent2:#14b8a6;--warn:#b45309;--err:#b91c1c;--ok:#047857;--border:#e2e8f0;--soft:#eef2f7;--shadow:rgba(15,23,42,.06);--chip:#f8fafc;--thead:#f8fafc;--row-hover:#f8fafc;--body-bg:radial-gradient(1200px 600px at 10% -10%,#ccfbf1 0%,transparent 55%),linear-gradient(160deg,#f8fafc,#eef2ff 55%,#f1f5f9)
+color-scheme:light;
+--bg:#f4f7fb;--card:#ffffff;--card2:#f8fafc;--text:#0f172a;--muted:#64748b;--accent:#0d9488;--accent2:#14b8a6;--warn:#b45309;--err:#b91c1c;--ok:#047857;--border:#e2e8f0;--soft:#eef2f7;--shadow:rgba(15,23,42,.06);--chip:#f8fafc;--thead:#f8fafc;--row-hover:#f1f5f9;--body-bg:radial-gradient(1200px 600px at 10% -10%,#ccfbf1 0%,transparent 55%),linear-gradient(160deg,#f8fafc,#eef2ff 55%,#f1f5f9);
+--btn-warn-bg:#fff7ed;--btn-warn-bd:#fdba74;--btn-warn-fg:#9a3412;
+--btn-off-bg:#ffffff;--btn-off-bd:#fca5a5;--btn-off-fg:#991b1b;--btn-off-hover:#fef2f2;
+--btn-on-bg:#047857;--btn-on-bd:#065f46;--btn-on-fg:#ffffff;
+--primary-bd:#0f766e;--primary-fg:#ffffff;
+--badge-bg:#ccfbf1;--badge-fg:#0f766e;--badge-bd:#99f6e4;
+--guide-bg:#fffbeb;--guide-bd:#fcd34d;--guide-fg:#78350f;
+--row-auto-bg:linear-gradient(90deg,#f0fdfa 0%,#f8fffd 55%,var(--card) 100%);
+--row-due-bg:linear-gradient(90deg,#fef2f2 0%,#fff8f8 55%,var(--card) 100%);
+--row-over-bg:linear-gradient(90deg,#fff7ed 0%,#fffaf5 55%,var(--card) 100%);
+--row-manual-bg:linear-gradient(90deg,#f5f3ff 0%,#faf8ff 55%,var(--card) 100%);
+--tag-auto-bg:#ecfeff;--tag-auto-fg:#0e7490;--tag-auto-bd:#a5f3fc;
+--tag-manual-bg:#fef3c7;--tag-manual-fg:#92400e;--tag-manual-bd:#fcd34d;
+--tag-active-bg:#ecfdf5;--tag-active-fg:#047857;--tag-active-bd:#a7f3d0;
+--tag-due-bg:#fef2f2;--tag-due-fg:#b91c1c;--tag-due-bd:#fecaca;
+--tag-over-bg:#fff7ed;--tag-over-fg:#9a3412;--tag-over-bd:#fdba74;
+--tag-cpa-bg:#f1f5f9;--tag-cpa-fg:#475569;--tag-cpa-bd:#cbd5e1;
+--input-bg:var(--card);--input-fg:var(--text);--scrollbar:#cbd5e1;--scrollbar-track:transparent;
+--table-line:var(--soft);--bar-fill:linear-gradient(90deg,#14b8a6,#0d9488)
 }
 :root[data-theme="dark"]{
---bg:#0f172a;--card:#111827;--card2:#0b1220;--text:#e2e8f0;--muted:#94a3b8;--accent:#2dd4bf;--accent2:#14b8a6;--warn:#fbbf24;--err:#f87171;--ok:#34d399;--border:#334155;--soft:#1e293b;--shadow:rgba(0,0,0,.35);--chip:#1e293b;--thead:#0b1220;--row-hover:#1e293b;--body-bg:radial-gradient(1000px 500px at 0% 0%,#134e4a 0%,transparent 50%),linear-gradient(165deg,#0b1220,#111827 50%,#0f172a)
+color-scheme:dark;
+--bg:#0b1220;--card:#111827;--card2:#0f172a;--text:#e5eefb;--muted:#94a3b8;--accent:#2dd4bf;--accent2:#14b8a6;--warn:#fbbf24;--err:#f87171;--ok:#34d399;--border:#2b3648;--soft:#1a2333;--shadow:rgba(0,0,0,.45);--chip:#1a2333;--thead:#0d1422;--row-hover:#172033;--body-bg:radial-gradient(900px 480px at 8% -8%,rgba(19,78,74,.45) 0%,transparent 55%),linear-gradient(165deg,#0a0f1a 0%,#0f172a 48%,#0b1220 100%);
+--btn-warn-bg:#3b2610;--btn-warn-bd:#92400e;--btn-warn-fg:#fdba74;
+--btn-off-bg:#1f1212;--btn-off-bd:#7f1d1d;--btn-off-fg:#fecaca;--btn-off-hover:#2a1515;
+--btn-on-bg:#065f46;--btn-on-bd:#047857;--btn-on-fg:#ecfdf5;
+--primary-bd:#0f766e;--primary-fg:#042f2e;
+--badge-bg:#134e4a;--badge-fg:#99f6e4;--badge-bd:#115e59;
+--guide-bg:#2a2110;--guide-bd:#854d0e;--guide-fg:#fde68a;
+--row-auto-bg:linear-gradient(90deg,#0f2a28 0%,#111827 55%,var(--card) 100%);
+--row-due-bg:linear-gradient(90deg,#2a1212 0%,#111827 55%,var(--card) 100%);
+--row-over-bg:linear-gradient(90deg,#2a1a0c 0%,#111827 55%,var(--card) 100%);
+--row-manual-bg:linear-gradient(90deg,#1f1830 0%,#111827 55%,var(--card) 100%);
+--tag-auto-bg:#164e63;--tag-auto-fg:#a5f3fc;--tag-auto-bd:#0e7490;
+--tag-manual-bg:#78350f;--tag-manual-fg:#fde68a;--tag-manual-bd:#b45309;
+--tag-active-bg:#064e3b;--tag-active-fg:#a7f3d0;--tag-active-bd:#047857;
+--tag-due-bg:#7f1d1d;--tag-due-fg:#fecaca;--tag-due-bd:#b91c1c;
+--tag-over-bg:#7c2d12;--tag-over-fg:#fed7aa;--tag-over-bd:#c2410c;
+--tag-cpa-bg:#1e293b;--tag-cpa-fg:#cbd5e1;--tag-cpa-bd:#475569;
+--input-bg:#0b1220;--input-fg:#e5eefb;--scrollbar:#334155;--scrollbar-track:#0b1220;
+--table-line:var(--soft);--bar-fill:linear-gradient(90deg,#2dd4bf,#0d9488)
 }
-*{box-sizing:border-box}body{margin:0;background:var(--body-bg);color:var(--text);font-family:"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;min-height:100vh;padding:1.25rem}
+/* system dark before JS / when host silent: avoid flash of light shell */
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    color-scheme:dark;
+    --bg:#0b1220;--card:#111827;--card2:#0f172a;--text:#e5eefb;--muted:#94a3b8;--accent:#2dd4bf;--accent2:#14b8a6;--warn:#fbbf24;--err:#f87171;--ok:#34d399;--border:#2b3648;--soft:#1a2333;--shadow:rgba(0,0,0,.45);--chip:#1a2333;--thead:#0d1422;--row-hover:#172033;--body-bg:radial-gradient(900px 480px at 8% -8%,rgba(19,78,74,.45) 0%,transparent 55%),linear-gradient(165deg,#0a0f1a 0%,#0f172a 48%,#0b1220 100%);
+    --btn-warn-bg:#3b2610;--btn-warn-bd:#92400e;--btn-warn-fg:#fdba74;
+    --btn-off-bg:#1f1212;--btn-off-bd:#7f1d1d;--btn-off-fg:#fecaca;--btn-off-hover:#2a1515;
+    --btn-on-bg:#065f46;--btn-on-bd:#047857;--btn-on-fg:#ecfdf5;
+    --primary-bd:#0f766e;--primary-fg:#042f2e;
+    --badge-bg:#134e4a;--badge-fg:#99f6e4;--badge-bd:#115e59;
+    --guide-bg:#2a2110;--guide-bd:#854d0e;--guide-fg:#fde68a;
+    --row-auto-bg:linear-gradient(90deg,#0f2a28 0%,#111827 55%,var(--card) 100%);
+    --row-due-bg:linear-gradient(90deg,#2a1212 0%,#111827 55%,var(--card) 100%);
+    --row-over-bg:linear-gradient(90deg,#2a1a0c 0%,#111827 55%,var(--card) 100%);
+    --row-manual-bg:linear-gradient(90deg,#1f1830 0%,#111827 55%,var(--card) 100%);
+    --tag-auto-bg:#164e63;--tag-auto-fg:#a5f3fc;--tag-auto-bd:#0e7490;
+    --tag-manual-bg:#78350f;--tag-manual-fg:#fde68a;--tag-manual-bd:#b45309;
+    --tag-active-bg:#064e3b;--tag-active-fg:#a7f3d0;--tag-active-bd:#047857;
+    --tag-due-bg:#7f1d1d;--tag-due-fg:#fecaca;--tag-due-bd:#b91c1c;
+    --tag-over-bg:#7c2d12;--tag-over-fg:#fed7aa;--tag-over-bd:#c2410c;
+    --tag-cpa-bg:#1e293b;--tag-cpa-fg:#cbd5e1;--tag-cpa-bd:#475569;
+    --input-bg:#0b1220;--input-fg:#e5eefb;--scrollbar:#334155;--scrollbar-track:#0b1220;
+    --table-line:var(--soft);--bar-fill:linear-gradient(90deg,#2dd4bf,#0d9488)
+  }
+}
+*{box-sizing:border-box}
+html,body{background:var(--body-bg);color:var(--text)}
+body{margin:0;font-family:"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;min-height:100vh;padding:1.25rem}
 .theme-toggle{display:none!important}
+/* scrollbars (webkit) */
+*::-webkit-scrollbar{width:10px;height:10px}
+*::-webkit-scrollbar-thumb{background:var(--scrollbar);border-radius:8px;border:2px solid transparent;background-clip:padding-box}
+*::-webkit-scrollbar-track{background:var(--scrollbar-track)}
 
 
 
@@ -24,17 +93,17 @@
 .wrap{max-width:1080px;margin:0 auto}
 h1{font-size:1.3rem;margin:0 0 .35rem;display:flex;align-items:center;gap:.5rem;flex-wrap:wrap}
 .sub{color:var(--muted);font-size:.9rem;margin-bottom:1rem}
-.badge{font-size:.72rem;padding:.18rem .55rem;border-radius:9999px;background:#ccfbf1;color:#0f766e;border:1px solid #99f6e4;font-weight:600}
-.badge.off{background:#fee2e2;color:#991b1b;border-color:#fecaca}
-.badge.on{background:#d1fae5;color:#065f46;border-color:#6ee7b7}
-button.on{background:#047857;border-color:#065f46;color:#fff}
-button.off{background:#fff;border-color:#fca5a5;color:#991b1b}
-button.on:hover{filter:brightness(1.05)}
-button.off:hover{background:#fef2f2}
+.badge{font-size:.72rem;padding:.18rem .55rem;border-radius:9999px;background:var(--badge-bg);color:var(--badge-fg);border:1px solid var(--badge-bd);font-weight:600}
+.badge.off{background:var(--tag-due-bg);color:var(--tag-due-fg);border-color:var(--tag-due-bd)}
+.badge.on{background:var(--tag-active-bg);color:var(--tag-active-fg);border-color:var(--tag-active-bd)}
+button.on{background:var(--btn-on-bg);border-color:var(--btn-on-bd);color:var(--btn-on-fg)}
+button.off{background:var(--btn-off-bg);border-color:var(--btn-off-bd);color:var(--btn-off-fg)}
+button.on:hover{filter:brightness(1.08)}
+button.off:hover{background:var(--btn-off-hover)}
 .status-dot{width:.65rem;height:.65rem;border-radius:50%;display:inline-block;margin-right:.35rem;vertical-align:middle}
-.status-dot.on{background:#10b981;box-shadow:0 0 0 3px rgba(16,185,129,.25)}
-.status-dot.off{background:#ef4444;box-shadow:0 0 0 3px rgba(239,68,68,.2)}
-.badge.muted{background:#f1f5f9;color:var(--muted);border-color:var(--border)}
+.status-dot.on{background:var(--ok);box-shadow:0 0 0 3px color-mix(in srgb,var(--ok) 30%,transparent)}
+.status-dot.off{background:var(--err);box-shadow:0 0 0 3px color-mix(in srgb,var(--err) 25%,transparent)}
+.badge.muted{background:var(--chip);color:var(--muted);border-color:var(--border)}
 .grid{display:grid;gap:1rem}
 .card{background:var(--card);border:1px solid var(--border);border-radius:14px;padding:1rem 1.1rem;box-shadow:0 1px 3px var(--shadow)}
 .row{display:flex;gap:.6rem;flex-wrap:wrap;align-items:center}
@@ -62,47 +131,50 @@ input,select,button{font-size:.86rem}
 .stat span.lbl{color:var(--muted);font-size:.78rem;font-weight:600}
 .stat .sub{color:var(--muted);font-size:.72rem;line-height:1.35;margin-top:auto}
 .stat .bar{height:4px;background:var(--soft);border-radius:999px;overflow:hidden;margin-top:.45rem}
-.stat .bar>i{display:block;height:100%;background:linear-gradient(90deg,#14b8a6,#0d9488);border-radius:999px;width:0%}
+.stat .bar>i{display:block;height:100%;background:var(--bar-fill);border-radius:999px;width:0%}
 button,.btn{appearance:none;border:1px solid var(--border);background:var(--card);color:var(--text);border-radius:10px;padding:.45rem .8rem;font-size:.88rem;cursor:pointer}
-button.primary{background:var(--accent);border-color:#0f766e;color:#fff}
-button.warn{background:#fff7ed;border-color:#fdba74;color:#9a3412}
+button.primary{background:var(--accent);border-color:var(--primary-bd);color:var(--primary-fg)}
+button.warn{background:var(--btn-warn-bg);border-color:var(--btn-warn-bd);color:var(--btn-warn-fg)}
 button:disabled{opacity:.5;cursor:not-allowed}
-input,select{border:1px solid var(--border);border-radius:10px;padding:.45rem .65rem;font-size:.88rem;min-width:0;background:var(--card);color:var(--text)}
+input,select{border:1px solid var(--border);border-radius:10px;padding:.45rem .65rem;font-size:.88rem;min-width:0;background:var(--input-bg);color:var(--input-fg)}
+input::placeholder{color:color-mix(in srgb,var(--muted) 85%,transparent)}
+option{background:var(--input-bg);color:var(--input-fg)}
 table{width:100%;border-collapse:collapse;font-size:.86rem}
 th,td{text-align:left;padding:.55rem .4rem;border-bottom:1px solid var(--border);vertical-align:top}
 th{color:var(--muted);font-weight:600}
 .tag{display:inline-block;padding:.1rem .45rem;border-radius:999px;font-size:.72rem;border:1px solid var(--border)}
-.tag.auto{background:#ecfeff;color:#0e7490;border-color:#a5f3fc}
-.tag.manual{background:#fef3c7;color:#92400e;border-color:#fcd34d}
-.tag.active{background:#ecfdf5;color:#047857;border-color:#a7f3d0}
+.tag.auto{background:var(--tag-auto-bg);color:var(--tag-auto-fg);border-color:var(--tag-auto-bd)}
+.tag.manual{background:var(--tag-manual-bg);color:var(--tag-manual-fg);border-color:var(--tag-manual-bd)}
+.tag.active{background:var(--tag-active-bg);color:var(--tag-active-fg);border-color:var(--tag-active-bd)}
 .muted{color:var(--muted)}
 .err{color:var(--err)}
 .acc-toolbar{display:flex;gap:.45rem;flex-wrap:wrap;align-items:center;margin:.35rem 0 .7rem;padding:.55rem .65rem;background:linear-gradient(180deg,var(--card2),var(--card));border:1px solid var(--border);border-radius:12px}
-.acc-table-wrap{overflow:auto;height:min(52vh,480px);max-height:min(52vh,480px);border:1px solid var(--border);border-radius:12px;background:var(--card,#fff)}
+.acc-table-wrap{overflow:auto;height:min(52vh,480px);max-height:min(52vh,480px);border:1px solid var(--border);border-radius:12px;background:var(--card)}
 table.acc{width:100%;border-collapse:separate;border-spacing:0;font-size:.86rem}
 table.acc thead th{position:sticky;top:0;z-index:1;background:var(--thead);color:var(--muted);font-weight:700;font-size:.75rem;letter-spacing:.02em;text-align:left;padding:.65rem .55rem;border-bottom:1px solid var(--border);white-space:nowrap}
-table.acc tbody td{padding:.7rem .55rem;border-bottom:1px solid var(--soft);vertical-align:top}
+table.acc tbody td{padding:.7rem .55rem;border-bottom:1px solid var(--table-line);vertical-align:top}
 table.acc tbody tr:last-child td{border-bottom:none}
 table.acc tbody tr:hover{background:var(--row-hover)}
-table.acc tbody tr.row-over{background:#fff7ed}
-table.acc tbody tr.row-due{background:#fef2f2}
-table.acc tbody tr.row-auto{background:#f0fdfa}
+table.acc tbody tr.row-over{background:var(--row-over-bg)}
+table.acc tbody tr.row-due{background:var(--row-due-bg)}
+table.acc tbody tr.row-auto{background:var(--row-auto-bg)}
+table.acc tbody tr.row-manual{background:var(--row-manual-bg)}
 .acc-name{font-weight:600;line-height:1.25}
 .acc-file{color:var(--muted);font-size:.72rem;margin-top:.15rem;word-break:break-all}
 .acc-meta{display:flex;flex-wrap:wrap;gap:.3rem;margin-top:.25rem}
 .chip{display:inline-flex;align-items:center;gap:.2rem;padding:.08rem .4rem;border-radius:999px;font-size:.7rem;border:1px solid var(--border);background:var(--chip);color:var(--muted);font-variant-numeric:tabular-nums}
-.chip.hot{background:#ecfeff;border-color:#a5f3fc;color:#0e7490}
-.chip.over{background:#fff7ed;border-color:#fdba74;color:#9a3412}
-.chip.due{background:#fef2f2;border-color:#fecaca;color:#b91c1c}
+.chip.hot{background:var(--tag-hot-bg,var(--tag-auto-bg));border-color:var(--tag-hot-bd,var(--tag-auto-bd));color:var(--tag-hot-fg,var(--tag-auto-fg))}
+.chip.over{background:var(--tag-over-bg);border-color:var(--tag-over-bd);color:var(--tag-over-fg)}
+.chip.due{background:var(--tag-due-bg);border-color:var(--tag-due-bd);color:var(--tag-due-fg)}
 .reason-main{font-weight:600;line-height:1.35}
 .reason-sub{color:var(--muted);font-size:.72rem;margin-top:.2rem;line-height:1.35}
-.tag.due{background:#fef2f2;color:#b91c1c;border-color:#fecaca}
-.tag.over{background:#fff7ed;color:#9a3412;border-color:#fdba74}
-.tag.cpa{background:#f1f5f9;color:#475569;border-color:#cbd5e1}
-.tag.hot{background:#ecfeff;color:#0e7490;border-color:#a5f3fc}
+.tag.due{background:var(--tag-due-bg);color:var(--tag-due-fg);border-color:var(--tag-due-bd)}
+.tag.over{background:var(--tag-over-bg);color:var(--tag-over-fg);border-color:var(--tag-over-bd)}
+.tag.cpa{background:var(--tag-cpa-bg);color:var(--tag-cpa-fg);border-color:var(--tag-cpa-bd)}
+.tag.hot{background:var(--tag-auto-bg);color:var(--tag-auto-fg);border-color:var(--tag-auto-bd)}
 .stack{display:flex;flex-direction:column;gap:.2rem}
 .mono{font-variant-numeric:tabular-nums}
-.guide{display:none;background:#fffbeb;border:1px solid #fcd34d;color:#78350f;border-radius:10px;padding:.65rem .8rem;margin:.5rem 0;font-size:.85rem}
+.guide{display:none;background:var(--guide-bg);border:1px solid var(--guide-bd);color:var(--guide-fg);border-radius:10px;padding:.65rem .8rem;margin:.5rem 0;font-size:.85rem}
 code{background:var(--soft);padding:.1rem .3rem;border-radius:4px;font-size:.82rem}
 
 /* 0.3.1 clean shell */
@@ -150,31 +222,16 @@ label > span.lbl{display:block;margin-bottom:.15rem;color:var(--muted);font-size
 
 
 
-/* host dark: tag/badge contrast */
-:root[data-theme="dark"] .badge{background:#134e4a;color:#99f6e4;border-color:#115e59}
-:root[data-theme="dark"] .badge.off{background:#7f1d1d;color:#fecaca;border-color:#991b1b}
-:root[data-theme="dark"] .badge.on{background:#064e3b;color:#a7f3d0;border-color:#047857}
-:root[data-theme="dark"] .badge.muted{background:#1e293b;color:#94a3b8;border-color:#334155}
-:root[data-theme="dark"] .tag.auto{background:#164e63;color:#a5f3fc;border-color:#0e7490}
-:root[data-theme="dark"] .tag.manual{background:#78350f;color:#fde68a;border-color:#b45309}
-:root[data-theme="dark"] .tag.active{background:#064e3b;color:#a7f3d0;border-color:#047857}
-:root[data-theme="dark"] .tag.due{background:#7f1d1d;color:#fecaca;border-color:#b91c1c}
-:root[data-theme="dark"] .tag.over{background:#7c2d12;color:#fed7aa;border-color:#c2410c}
-:root[data-theme="dark"] .tag.cpa{background:#1e293b;color:#cbd5e1;border-color:#475569}
-:root[data-theme="dark"] .tag.hot{background:#164e63;color:#a5f3fc;border-color:#0e7490}
-:root[data-theme="dark"] .chip{background:#1e293b;color:#94a3b8;border-color:#334155}
-:root[data-theme="dark"] .chip.hot{background:#164e63;color:#a5f3fc;border-color:#0e7490}
-:root[data-theme="dark"] .chip.over{background:#7c2d12;color:#fed7aa;border-color:#c2410c}
-:root[data-theme="dark"] table.acc tbody tr.row-auto{background:linear-gradient(90deg,#0f2a28 0%,#111827 55%,var(--card) 100%)}
-:root[data-theme="dark"] table.acc tbody tr.row-due{background:linear-gradient(90deg,#2a1212 0%,#111827 55%,var(--card) 100%)}
-:root[data-theme="dark"] table.acc tbody tr.row-over{background:linear-gradient(90deg,#2a1a0c 0%,#111827 55%,var(--card) 100%)}
-:root[data-theme="dark"] table.acc tbody tr.row-manual{background:linear-gradient(90deg,#1f1830 0%,#111827 55%,var(--card) 100%)}
-
-/* 0.3.5 account / patrol polish */
-table.acc tbody tr.row-auto{background:linear-gradient(90deg,#f0fdfa 0%,#f8fffd 55%,var(--card) 100%)}
-table.acc tbody tr.row-due{background:linear-gradient(90deg,#fef2f2 0%,#fff8f8 55%,var(--card) 100%)}
-table.acc tbody tr.row-over{background:linear-gradient(90deg,#fff7ed 0%,#fffaf5 55%,var(--card) 100%)}
-table.acc tbody tr.row-manual{background:linear-gradient(90deg,#f5f3ff 0%,#faf8ff 55%,var(--card) 100%)}
+/* 0.3.10 dark-safe account / patrol polish (tokens only — no light override after dark) */
+table.acc tbody tr.row-auto{background:var(--row-auto-bg)}
+table.acc tbody tr.row-due{background:var(--row-due-bg)}
+table.acc tbody tr.row-over{background:var(--row-over-bg)}
+table.acc tbody tr.row-manual{background:var(--row-manual-bg)}
+:root[data-theme="dark"] .card{box-shadow:0 1px 0 rgba(255,255,255,.03) inset,0 8px 24px var(--shadow)}
+:root[data-theme="dark"] .log-scroll,:root[data-theme="dark"] .acc-table-wrap{box-shadow:inset 0 0 0 1px rgba(255,255,255,.03)}
+:root[data-theme="dark"] button.primary{color:#042f2e;font-weight:650}
+:root[data-theme="dark"] .stat b{color:var(--text)}
+:root[data-theme="dark"] code{background:var(--soft);color:#e2e8f0}
 .acc-name{font-weight:650;font-size:.88rem;letter-spacing:.01em}
 .acc-file{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:.68rem;opacity:.85}
 .acc-meta .chip{font-size:.68rem}
@@ -191,7 +248,29 @@ table.acc tbody tr.row-manual{background:linear-gradient(90deg,#f5f3ff 0%,#faf8f
 #patrolSummaryLine b{font-variant-numeric:tabular-nums}
 .patrol-status-wrap{flex:1;min-width:220px}
 
-</style></head><body><div class="wrap">
+</style>
+<script id="themeBoot">
+(function(){
+  try{
+    var t="light";
+    var sys = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches;
+    // quick peek parent
+    try{
+      var pe = window.parent && window.parent!==window ? window.parent.document.documentElement : null;
+      if(pe){
+        var a=(pe.getAttribute("data-theme")||pe.getAttribute("data-color-mode")||pe.getAttribute("data-bs-theme")||"").toLowerCase();
+        if(a==="dark"||a==="light") t=a;
+        else if(/\bdark\b/.test(String(pe.className||"").toLowerCase())) t="dark";
+        else if(/\blight\b/.test(String(pe.className||"").toLowerCase())) t="light";
+        else if(sys) t="dark";
+      } else if(sys) t="dark";
+    }catch(e){ if(sys) t="dark"; }
+    document.documentElement.setAttribute("data-theme", t);
+    document.documentElement.style.colorScheme = t;
+  }catch(e){}
+})();
+</script>
+</head><body><div class="wrap">
 <div class="topbar">
   <div>
     <h1>xAI Quota Guard <span class="badge" id="enBadge">…</span> <span class="badge muted" id="verBadge">v0</span></h1>
@@ -350,7 +429,7 @@ table.acc tbody tr.row-manual{background:linear-gradient(90deg,#f5f3ff 0%,#faf8f
     </div>
     <div id="actionLogBox" class="log-scroll">
       <table style="width:100%;border-collapse:collapse;table-layout:fixed">
-        <thead><tr style="text-align:left;color:var(--muted);border-bottom:1px solid var(--border);position:sticky;top:0;background:var(--card,#fff)">
+        <thead><tr style="text-align:left;color:var(--muted);border-bottom:1px solid var(--border);position:sticky;top:0;background:var(--card)">
           <th style="padding:.25rem;width:20%">时间</th>
           <th style="width:12%">动作</th>
           <th style="width:10%">来源</th>
@@ -409,46 +488,66 @@ const API = "/v0/management/cpa-xai-quota-guard";
 const KEY_LS = "cpaXaiQgKey";
 function mgmtKey(){ return localStorage.getItem(KEY_LS) || ""; }
 function setMgmtKey(v){ localStorage.setItem(KEY_LS, v || ""); }
-// Theme: follow CPA / CPAMP host shell (no plugin-owned dark mode toggle).
+// Theme: follow CPA / CPAMP host shell; fallback system night mode (no local toggle).
 function detectHostTheme(){
-  // 1) same-window / parent document cues
-  var roots = [];
-  try{ roots.push(document.documentElement); roots.push(document.body); }catch(e){}
-  try{
-    if(window.parent && window.parent !== window){
-      roots.push(window.parent.document.documentElement);
-      roots.push(window.parent.document.body);
-    }
-  }catch(e){ /* cross-origin parent: ignore */ }
-  try{
-    if(window.top && window.top !== window){
-      roots.push(window.top.document.documentElement);
-      roots.push(window.top.document.body);
-    }
-  }catch(e){}
-  for(var i=0;i<roots.length;i++){
-    var el = roots[i];
-    if(!el) continue;
-    var dt = (el.getAttribute && (el.getAttribute("data-theme") || el.getAttribute("data-color-mode") || el.getAttribute("data-bs-theme"))) || "";
-    dt = String(dt||"").toLowerCase();
-    if(dt==="dark" || dt==="light") return dt;
-    var cls = String(el.className||"").toLowerCase();
-    if(/\b(dark|theme-dark|dark-mode|darkmode|is-dark)\b/.test(cls)) return "dark";
-    if(/\b(light|theme-light|light-mode|lightmode|is-light)\b/.test(cls)) return "light";
+  var attrHit = "";
+  var classHit = "";
+  var lumDark = 0, lumLight = 0, lumSamples = 0;
+  function consider(el){
+    if(!el) return;
     try{
+      var dt = (el.getAttribute && (el.getAttribute("data-theme") || el.getAttribute("data-color-mode") || el.getAttribute("data-bs-theme") || el.getAttribute("data-mode"))) || "";
+      dt = String(dt||"").toLowerCase().trim();
+      if(!attrHit && (dt==="dark" || dt==="light" || dt==="night" || dt==="day")){
+        attrHit = (dt==="night") ? "dark" : (dt==="day" ? "light" : dt);
+      }
+      var cls = String(el.className || (el.classList && el.classList.value) || "").toLowerCase();
+      if(!classHit){
+        if(/\b(dark|theme-dark|dark-mode|darkmode|is-dark|night|theme-night|mode-dark)\b/.test(cls)) classHit = "dark";
+        else if(/\b(light|theme-light|light-mode|lightmode|is-light|day|theme-day|mode-light)\b/.test(cls)) classHit = "light";
+      }
       var cs = window.getComputedStyle(el);
       var bg = (cs && (cs.backgroundColor||"")) || "";
-      // rgb dark-ish backgrounds from host shell
       var m = bg.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/i);
       if(m){
-        var r=+m[1], g=+m[2], b=+m[3];
+        var r=+m[1], g=+m[2], b=+m[3], a=1;
+        var ma = bg.match(/rgba\((\d+),\s*(\d+),\s*(\d+),\s*([\d.]+)/i);
+        if(ma) a = parseFloat(ma[4]);
+        if(a < 0.15) return; // skip transparent shells
         var lum = (0.2126*r + 0.7152*g + 0.0722*b)/255;
-        if(lum < 0.35) return "dark";
-        if(lum > 0.75) return "light";
+        lumSamples++;
+        if(lum < 0.42) lumDark++;
+        if(lum > 0.72) lumLight++;
       }
     }catch(e){}
   }
-  // 2) system preference as last resort (host often mirrors it)
+  try{ consider(document.documentElement); consider(document.body); }catch(e){}
+  try{
+    if(window.parent && window.parent !== window){
+      consider(window.parent.document.documentElement);
+      consider(window.parent.document.body);
+      // CPA often paints main chrome on #app / .layout
+      try{
+        var pd = window.parent.document;
+        ["#app",".layout",".main",".content",".shell","[data-theme]","[class*='dark']","[class*='theme']"].forEach(function(sel){
+          try{ var n=pd.querySelector(sel); if(n) consider(n); }catch(e){}
+        });
+      }catch(e){}
+    }
+  }catch(e){ /* cross-origin */ }
+  try{
+    if(window.top && window.top !== window && window.top !== window.parent){
+      consider(window.top.document.documentElement);
+      consider(window.top.document.body);
+    }
+  }catch(e){}
+  // priority: explicit attr > class > host luminance majority > system
+  if(attrHit) return attrHit;
+  if(classHit) return classHit;
+  if(lumSamples > 0){
+    if(lumDark > lumLight) return "dark";
+    if(lumLight > lumDark) return "light";
+  }
   try{
     if(window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches) return "dark";
   }catch(e){}
@@ -456,16 +555,21 @@ function detectHostTheme(){
 }
 function applyHostTheme(t){
   t = (t==="dark") ? "dark" : "light";
-  document.documentElement.setAttribute("data-theme", t);
-  document.documentElement.style.colorScheme = t;
-  // do NOT write local theme preference — host is source of truth
+  var root = document.documentElement;
+  if(root.getAttribute("data-theme") !== t){
+    root.setAttribute("data-theme", t);
+  }
+  root.style.colorScheme = t;
+  try{ document.body && document.body.setAttribute("data-theme", t); }catch(e){}
+  // do NOT write local theme preference — host/system is source of truth
 }
 function syncHostTheme(){
   applyHostTheme(detectHostTheme());
 }
-syncHostTheme();
-// re-sync: host theme button may flip without reloading iframe
-setInterval(function(){ try{ syncHostTheme(); }catch(e){} }, 1500);
+// paint before first paint as much as possible
+try{ syncHostTheme(); }catch(e){}
+// re-sync: host theme button / OS night mode may flip without reloading iframe
+setInterval(function(){ try{ syncHostTheme(); }catch(e){} }, 1200);
 try{
   if(window.matchMedia){
     var mq = window.matchMedia("(prefers-color-scheme: dark)");
@@ -475,12 +579,11 @@ try{
   }
 }catch(e){}
 try{
-  // observe parent html class/theme attr when same-origin
   if(window.parent && window.parent !== window && window.parent.document && window.parent.document.documentElement){
     var obs = new MutationObserver(function(){ syncHostTheme(); });
-    obs.observe(window.parent.document.documentElement, {attributes:true, attributeFilter:["class","data-theme","data-color-mode","data-bs-theme"]});
+    obs.observe(window.parent.document.documentElement, {attributes:true, attributeFilter:["class","data-theme","data-color-mode","data-bs-theme","data-mode","style"]});
     if(window.parent.document.body){
-      obs.observe(window.parent.document.body, {attributes:true, attributeFilter:["class","data-theme","data-color-mode","data-bs-theme"]});
+      obs.observe(window.parent.document.body, {attributes:true, attributeFilter:["class","data-theme","data-color-mode","data-bs-theme","data-mode","style"]});
     }
   }
 }catch(e){}
@@ -808,6 +911,7 @@ function patrolActionLabel(a){
   var m = {
     deleted:"已删除", alive:"存活", error:"错误", cooldown:"冷却禁用", cooldown_skip:"跳过", reenabled:"已恢复启用",
     net_timeout:"网络超时", net_canceled:"请求取消", net_dns:"DNS失败", net_tls:"TLS失败", net_connect:"连接失败", net_error:"网络异常",
+    patrol_abort_net:"网络中止",
     probe_http_4xx:"探测4xx", probe_http_5xx:"探测5xx", probe_unprocessable:"422体错误", region_block:"区域/模型不可用", cli_version:"CLI版本被拒"
   };
   return m[a] || a || "—";
@@ -1671,7 +1775,7 @@ function renderPassiveActions(items){
   }
   tb.innerHTML = list.map(function(x){
     var color = x.action==="delete" ? "var(--err)" : (x.action==="recover"||x.action==="reenable" ? "var(--ok)" : (String(x.action||"").indexOf("skip")>=0 ? "var(--muted)" : "var(--warn)"));
-    return '<tr style="border-bottom:1px solid #f1f5f9">' +
+    return '<tr style="border-bottom:1px solid var(--soft)">' +
       '<td style="padding:.2rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+fmtTime(x.time_ms)+'</td>' +
       '<td style="font-weight:600;color:'+color+';white-space:nowrap">'+esc(passiveActionLabel(x.action))+'</td>' +
       '<td style="white-space:nowrap">'+esc(passiveSourceLabel(x.source))+'</td>' +
@@ -1703,7 +1807,7 @@ function renderDelHistFromState(items){
     else if(/region|not available in your/i.test(rs)) src = "区域";
     else if(/permission-denied|invalid or expired|401|403/i.test(rs) && rs.indexOf("free-usage")<0) src = "死号";
     else if(/spending-limit|402/i.test(rs)) src = "积分";
-    return '<tr style="border-bottom:1px solid #f1f5f9">' +
+    return '<tr style="border-bottom:1px solid var(--soft)">' +
       '<td style="padding:.2rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+fmtTime(x.deleted_at_ms)+'</td>' +
       '<td style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(x.account||x.file_name||x.auth_index||"?")+'</td>' +
       '<td style="font-weight:600;white-space:nowrap">'+src+'</td>' +
@@ -1789,7 +1893,8 @@ function renderActionLog(deletes, actions){
     var color = (x.action==="delete"||x.action==="deleted") ? "var(--err)" : ((x.action==="recover"||x.action==="reenable"||x.action==="reenabled") ? "var(--ok)" : (String(x.action||"").indexOf("skip")>=0 ? "var(--muted)" : "var(--warn)"));
     var actLab = (typeof passiveActionLabel==="function" ? passiveActionLabel(x.action) : null) || (typeof patrolActionLabel==="function" ? patrolActionLabel(x.action) : x.action) || x.action || "—";
     if(x.action==="delete"||x.action==="deleted") actLab = "删除";
-    return '<tr style="border-bottom:1px solid #f1f5f9">' +
+    if(x.action==="patrol_abort_net") actLab = "网络中止";
+    return '<tr style="border-bottom:1px solid var(--soft)">' +
       '<td style="padding:.2rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+fmtTime(x.time_ms)+'</td>' +
       '<td style="color:'+color+';font-weight:600;white-space:nowrap">'+esc(actLab)+'</td>' +
       '<td style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+esc(x.source||"—")+'</td>' +
@@ -1834,7 +1939,7 @@ function paintPatrol(p, r){
   var errBreak = document.getElementById("patrolErrBreak");
   if(errBreak){
     var eParts = [];
-    var errKeys = ["net_timeout","net_canceled","net_dns","net_tls","net_connect","net_error","region_block","cli_version","probe_unprocessable","probe_http_4xx","probe_http_5xx","error"];
+    var errKeys = ["net_timeout","net_canceled","net_dns","net_tls","net_connect","net_error","region_block","cli_version","probe_unprocessable","probe_http_4xx","probe_http_5xx","error","patrol_abort_net"];
     errKeys.forEach(function(k){ var n=Number(ba[k]||0); if(n) eParts.push(patrolActionLabel(k)+n); });
     // any other non-core actions
     Object.keys(ba).forEach(function(k){
@@ -1910,6 +2015,16 @@ function paintPatrol(p, r){
   if(p.running){
     var leftN = Math.max(0, (candidates||0) - probed);
     var eta = (rate > 0 && leftN > 0) ? formatPatrolDur(leftN / rate) : "";
+    var runErr = (p.last_error||"").trim();
+    var aborting = !!(runErr && (runErr.indexOf("中止")>=0 || runErr.indexOf("连通")>=0 || runErr.indexOf("代理")>=0));
+    if(aborting){
+      line1 = "中止释放中 · " + probed + "/" + (candidates||"?");
+      line2 = runErr + " · 正在取消在途探测";
+      st.style.color = "var(--err)";
+      if(st2) st2.style.color = "var(--err)";
+      document.getElementById("patrolBtn").textContent = "释放中...";
+      document.getElementById("patrolBtn").disabled = true;
+    } else {
     line1 = "巡查中 " + probed + "/" + (candidates||"?");
     if(thr) line1 += " · " + thr;
     if(rate > 0) line1 += " · " + rate.toFixed(1) + "/s";
@@ -1921,16 +2036,33 @@ function paintPatrol(p, r){
     if(skipped > 0) d2.push("跳过 " + skipped);
     line2 = d2.join(" · ");
     st.style.color = "var(--accent)";
+    if(st2) st2.style.color = "";
     document.getElementById("patrolBtn").textContent = "巡查中...";
     document.getElementById("patrolBtn").disabled = true;
+    }
     document.getElementById("patrolStopBtn").style.display = "";
     var pp0=document.getElementById("patrolProgress"); if(pp0){ pp0.hidden=false; pp0.style.display=""; }
   } else {
-    var err = p.last_error ? ("错误: " + p.last_error) : "";
+    var errRaw = (p.last_error||"").trim();
+    var err = errRaw ? ("⚠ " + errRaw) : "";
+    var aborted = !!errRaw && (errRaw.indexOf("中止")>=0 || errRaw.indexOf("连通")>=0 || errRaw.indexOf("网络")>=0 || errRaw.indexOf("代理")>=0);
     var scope = p.scope ? (p.scope==="spending_only"?"冷却复核":"全量启用") : "";
     if(probed===0 && !p.started_at_ms && !p.completed_at_ms){
       line1 = "空闲 · 等待手动/定时巡查";
       line2 = thr ? ("上次并发 " + thr) : "";
+      st.style.color = "var(--muted)";
+    } else if(aborted){
+      line1 = "已中止 · 网络/代理异常";
+      if(scope) line1 += " · " + scope;
+      if(probed>0) line1 += " · 已探测 " + probed + "/" + (candidates||"?");
+      line2 = errRaw;
+      st.style.color = "var(--err)";
+      if(st2) st2.style.color = "var(--err)";
+      // unlock so user can re-run after network recovers
+      try{
+        var b=document.getElementById("patrolBtn"); if(b){ b.disabled=false; b.textContent="启动巡查"; }
+        var sb=document.getElementById("patrolSpendBtn"); if(sb){ sb.disabled=false; sb.textContent="仅复查冷却号"; }
+      }catch(e){}
     } else {
       // totals only in summary chips — avoid dual summary strings
       line1 = "已完成";
@@ -1944,8 +2076,9 @@ function paintPatrol(p, r){
       if(p.saved_at_ms) d2b.push("已持久化");
       if(err) d2b.push(err);
       line2 = d2b.join(" · ");
+      st.style.color = "var(--muted)";
+      if(st2) st2.style.color = "";
     }
-    st.style.color = "var(--muted)";
     document.getElementById("patrolBtn").textContent = "启动巡查";
     document.getElementById("patrolBtn").disabled = false;
     document.getElementById("patrolStopBtn").style.display = "none";
@@ -1969,7 +2102,7 @@ function paintPatrol(p, r){
     window._PATROL_LOG_FP = logFp;
     tbody.innerHTML = log.slice(0, 50).map(function(e){
       var act=e.action||"";
-      var color = act==="deleted" ? "var(--err)" : (act==="alive") ? "var(--ok)" : act==="reenabled" ? "var(--accent)" : (act==="cooldown"||act==="cooldown_skip") ? "var(--accent)" : "var(--warn)";
+      var color = (act==="deleted"||act==="patrol_abort_net") ? "var(--err)" : (act==="alive") ? "var(--ok)" : act==="reenabled" ? "var(--accent)" : (act==="cooldown"||act==="cooldown_skip") ? "var(--accent)" : "var(--warn)";
       return '<tr style="border-bottom:1px solid var(--soft)">' +
         '<td style="padding:.2rem;white-space:nowrap">'+fmtTime(e.time_ms)+'</td>' +
         '<td style="max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(e.account||e.file_name||e.auth_index||"?")+'</td>' +
@@ -2024,8 +2157,13 @@ async function patrolStart(){
   }
 }
 async function patrolStop(){
-  await api("patrol/stop", {method:"POST"});
-  setTimeout(patrolPoll, 300);
+  try{
+    var b=document.getElementById("patrolBtn"); if(b){ b.textContent="释放中..."; b.disabled=true; }
+    await api("patrol/stop", {method:"POST"});
+  }catch(e){}
+  setTimeout(patrolPoll, 200);
+  setTimeout(patrolPoll, 800);
+  setTimeout(patrolPoll, 1600);
 }
 async function patrolPoll(){
   try{

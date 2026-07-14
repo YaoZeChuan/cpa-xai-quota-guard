@@ -1,6 +1,7 @@
 package xaiquota
 
 import (
+	"context"
 	"strconv"
 	"runtime"
 	"fmt"
@@ -23,6 +24,20 @@ const DefaultPatrolModel = "grok-4.5"
 
 // DefaultProbeBaseURL matches Grok CLI chat-proxy used by CPA oauth auth files.
 const DefaultProbeBaseURL = "https://cli-chat-proxy.grok.com/v1"
+
+// consecutiveNetFailThreshold: after this many consecutive transport-level
+// probe failures, run internet + proxy connectivity checks and abort if either is down.
+const consecutiveNetFailThreshold = 6
+
+// connectivityCheckTimeout bounds health probes used by the abort gate.
+const connectivityCheckTimeout = 5 * time.Second
+
+// connectivityProbeURLs are public endpoints used only for reachability (not xAI auth).
+var connectivityProbeURLs = []string{
+	"https://www.cloudflare.com/cdn-cgi/trace",
+	"https://1.1.1.1/",
+	"http://connectivitycheck.gstatic.com/generate_204",
+}
 
 // DefaultProbeCLIVersion is the minimum Grok CLI client version accepted by
 // cli-chat-proxy (HTTP 426 when missing/outdated: "CLI version (none) is outdated").
@@ -71,6 +86,13 @@ type patrolState struct {
 	winTotal    int
 	winTimeout  int
 	winNetErr   int
+	// consecutive transport failures → connectivity gate
+	consecutiveNetFails  int
+	connectivityChecking int32 // atomic: 1 while gate runs
+	connectivityChecked  bool  // true after a gate ran this streak window
+	// probeCtx cancels in-flight HTTP when stop/abort so workers release quickly
+	probeCtx    context.Context
+	probeCancel context.CancelFunc
 }
 
 // patrolLogEntry is an alias of durable PatrolLogEntry.
@@ -176,6 +198,150 @@ type probeResult struct {
 	reason    string
 	httpCode  int
 	modelUsed string
+}
+
+// isTransportNetFail reports probe outcomes that indicate local/path network issues
+// (not xAI business errors like 401/403/429/402).
+func isTransportNetFail(action string, httpCode int) bool {
+	if action == "patrol_abort_net" || action == "alive" || action == "deleted" || action == "cooldown" || action == "reenabled" {
+		return false
+	}
+	if httpCode <= 0 {
+		// synthetic net codes: 0,-1,-2,-3,-4,-5
+		// exclude canceled (user stop / ctx cancel)
+		if httpCode == -2 || action == "net_canceled" {
+			return false
+		}
+		// only count explicit net_* / generic network buckets
+		if action == "" {
+			return true
+		}
+		if strings.HasPrefix(action, "net_") {
+			return action != "net_canceled"
+		}
+		return false
+	}
+	switch action {
+	case "net_timeout", "net_dns", "net_tls", "net_connect", "net_error":
+		return true
+	}
+	return false
+}
+
+// ConnectivityReport is the result of internet + proxy health probes.
+type ConnectivityReport struct {
+	InternetOK    bool   `json:"internet_ok"`
+	InternetDetail string `json:"internet_detail,omitempty"`
+	ProxyConfigured bool `json:"proxy_configured"`
+	ProxyOK       bool   `json:"proxy_ok"`
+	ProxyDetail   string `json:"proxy_detail,omitempty"`
+	// Abort is true when any required path is down.
+	Abort         bool   `json:"abort"`
+	Message       string `json:"message,omitempty"`
+}
+
+// checkURLReachable issues a short GET/HEAD to urlStr via client.
+func checkURLReachable(client *http.Client, urlStr string) (ok bool, detail string) {
+	if client == nil {
+		return false, "nil client"
+	}
+	req, err := http.NewRequest(http.MethodGet, urlStr, nil)
+	if err != nil {
+		return false, err.Error()
+	}
+	req.Header.Set("User-Agent", "cpa-xai-quota-guard-connectivity/1.0")
+	resp, err := client.Do(req)
+	if err != nil {
+		return false, truncate(err.Error(), 120)
+	}
+	defer resp.Body.Close()
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
+	// Any HTTP response (incl. 4xx/5xx) means L3/L7 path works.
+	if resp.StatusCode > 0 {
+		return true, fmt.Sprintf("HTTP %d", resp.StatusCode)
+	}
+	return false, "empty status"
+}
+
+// checkInternetDirect tests public URLs without the patrol proxy.
+func checkInternetDirect() (ok bool, detail string) {
+	tr := &http.Transport{
+		Proxy:                 nil, // force direct
+		ResponseHeaderTimeout: connectivityCheckTimeout,
+		IdleConnTimeout:       5 * time.Second,
+	}
+	client := &http.Client{Timeout: connectivityCheckTimeout, Transport: tr}
+	var fails []string
+	for _, u := range connectivityProbeURLs {
+		if good, d := checkURLReachable(client, u); good {
+			return true, u + " → " + d
+		} else {
+			fails = append(fails, u+": "+d)
+		}
+	}
+	if len(fails) == 0 {
+		return false, "no probe URLs"
+	}
+	return false, strings.Join(fails, "; ")
+}
+
+// checkProxyPath tests the same public URLs through patrol_proxy_url.
+// If proxyURL is empty, reports proxy_configured=false and ProxyOK=true (N/A).
+func checkProxyPath(proxyURL string) (configured bool, ok bool, detail string) {
+	proxyURL = strings.TrimSpace(proxyURL)
+	if proxyURL == "" {
+		return false, true, "未配置巡查代理(直连)"
+	}
+	u, err := url.Parse(proxyURL)
+	if err != nil {
+		return true, false, "代理 URL 无效: " + err.Error()
+	}
+	tr := &http.Transport{
+		Proxy:                 http.ProxyURL(u),
+		ResponseHeaderTimeout: connectivityCheckTimeout,
+		IdleConnTimeout:       5 * time.Second,
+	}
+	client := &http.Client{Timeout: connectivityCheckTimeout, Transport: tr}
+	// Prefer HTTPS target so SOCKS/HTTP proxies exercise full path.
+	targets := []string{
+		"https://www.cloudflare.com/cdn-cgi/trace",
+		"https://1.1.1.1/",
+	}
+	var fails []string
+	for _, t := range targets {
+		if good, d := checkURLReachable(client, t); good {
+			// mask userinfo in detail
+			host := u.Host
+			return true, true, "proxy→" + host + " → " + t + " " + d
+		} else {
+			fails = append(fails, d)
+		}
+	}
+	return true, false, "proxy→" + u.Host + " 失败: " + strings.Join(fails, "; ")
+}
+
+// runConnectivityGate checks internet + proxy; returns report.
+func runConnectivityGate(proxyURL string) ConnectivityReport {
+	rep := ConnectivityReport{}
+	rep.InternetOK, rep.InternetDetail = checkInternetDirect()
+	rep.ProxyConfigured, rep.ProxyOK, rep.ProxyDetail = checkProxyPath(proxyURL)
+	var parts []string
+	if !rep.InternetOK {
+		parts = append(parts, "互联网异常("+rep.InternetDetail+")")
+	}
+	if rep.ProxyConfigured && !rep.ProxyOK {
+		parts = append(parts, "代理异常("+rep.ProxyDetail+")")
+	}
+	if len(parts) > 0 {
+		rep.Abort = true
+		rep.Message = "连续网络失败后连通性检测失败，已中止巡查: " + strings.Join(parts, "；")
+	} else {
+		rep.Message = "连通性正常 internet=" + rep.InternetDetail
+		if rep.ProxyConfigured {
+			rep.Message += "；proxy=" + rep.ProxyDetail
+		}
+	}
+	return rep
 }
 
 // classifyNetworkProbe maps transport failures into synthetic http buckets for stats/UI:
@@ -507,10 +673,25 @@ func (g *Guard) PatrolSweep(opts PatrolOptions) PatrolStatus {
 	g.patrol.scope = ""
 	g.patrol.lastPersistMS = 0
 	g.patrol.stopRequested = false
+	g.patrol.consecutiveNetFails = 0
+	g.patrol.connectivityChecked = false
+	atomic.StoreInt32(&g.patrol.connectivityChecking, 0)
+	// Fresh cancelable context for this sweep's HTTP probes.
+	if g.patrol.probeCancel != nil {
+		g.patrol.probeCancel()
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	g.patrol.probeCtx = ctx
+	g.patrol.probeCancel = cancel
 	g.patrol.mu.Unlock()
 
 	defer func() {
 		g.patrol.mu.Lock()
+		if g.patrol.probeCancel != nil {
+			g.patrol.probeCancel()
+			g.patrol.probeCancel = nil
+		}
+		g.patrol.probeCtx = nil
 		g.patrol.running = false
 		g.patrol.completedAtMS = time.Now().UnixMilli()
 		g.patrol.mu.Unlock()
@@ -789,6 +970,56 @@ func (g *Guard) PatrolSweep(opts PatrolOptions) PatrolStatus {
 	return g.PatrolStatus()
 }
 
+
+// patrolConnectivityAbortGate runs after consecutive transport failures.
+// If internet or configured proxy is unhealthy, stop the sweep and surface last_error.
+func (g *Guard) patrolConnectivityAbortGate(streak int) {
+	defer atomic.StoreInt32(&g.patrol.connectivityChecking, 0)
+	cfg := g.Config()
+	proxy := strings.TrimSpace(cfg.PatrolProxyURL)
+	g.logf("warn", "patrol 连续网络失败 %d 次，开始连通性检测(公网/代理)", streak)
+	rep := runConnectivityGate(proxy)
+	g.patrol.mu.Lock()
+	g.patrol.connectivityChecked = true
+	g.patrol.mu.Unlock()
+	if !rep.Abort {
+		g.logf("info", "patrol 连通性检测通过: %s（继续巡查；连续计数清零，后续再连续失败将复检）", rep.Message)
+		// Clear streak so a later outage can re-arm the gate without waiting for a success.
+		g.patrol.mu.Lock()
+		g.patrol.consecutiveNetFails = 0
+		g.patrol.connectivityChecked = false
+		g.patrol.mu.Unlock()
+		return
+	}
+	// Abort sweep: cancel HTTP + stop flag so workers release promptly (no button lock forever).
+	msg := rep.Message
+	g.setPatrolError(msg)
+	g.requestPatrolStop()
+	g.logf("error", "patrol 已中止: %s", msg)
+	now := time.Now().UnixMilli()
+	// Append to sweep log + counters without treating as a credential probe.
+	g.patrol.mu.Lock()
+	if g.patrol.byAction == nil {
+		g.patrol.byAction = map[string]int{}
+	}
+	g.patrol.byAction["patrol_abort_net"]++
+	g.patrol.totalErrors++
+	entry := patrolLogEntry{
+		TimeMS: now, Action: "patrol_abort_net", Reason: msg, HTTPCode: 0,
+	}
+	if len(g.patrol.lastSweepLog) >= 500 {
+		g.patrol.lastSweepLog = g.patrol.lastSweepLog[len(g.patrol.lastSweepLog)-499:]
+	}
+	g.patrol.lastSweepLog = append(g.patrol.lastSweepLog, entry)
+	g.patrol.mu.Unlock()
+	if g.store != nil {
+		_ = g.store.AppendAction(ActionEvent{
+			TimeMS: now, Action: "patrol_abort_net", Source: "patrol", Reason: msg,
+		})
+	}
+	g.persistPatrolSnapshot(false)
+}
+
 func (g *Guard) setPatrolError(msg string) {
 	g.patrol.mu.Lock()
 	g.patrol.lastError = msg
@@ -871,6 +1102,15 @@ func (g *Guard) recordProbeResult(r probeResult) {
 			g.patrol.winNetErr++
 		}
 	}
+	// Consecutive transport-level network failures (for connectivity abort gate).
+	if isTransportNetFail(r.action, r.httpCode) {
+		g.patrol.consecutiveNetFails++
+	} else {
+		g.patrol.consecutiveNetFails = 0
+		g.patrol.connectivityChecked = false
+	}
+	consec := g.patrol.consecutiveNetFails
+	needGate := consec >= consecutiveNetFailThreshold && !g.patrol.connectivityChecked && atomic.LoadInt32(&g.patrol.connectivityChecking) == 0
 	if g.patrol.byHTTP == nil {
 		g.patrol.byHTTP = map[int]int{}
 	}
@@ -887,7 +1127,8 @@ func (g *Guard) recordProbeResult(r probeResult) {
 	case "deleted":
 		g.patrol.totalDeleted++
 	case "error", "net_timeout", "net_canceled", "net_dns", "net_tls", "net_connect", "net_error",
-		"probe_http_4xx", "probe_http_5xx", "probe_unprocessable", "region_block", "cli_version":
+		"probe_http_4xx", "probe_http_5xx", "probe_unprocessable", "region_block", "cli_version",
+		"patrol_abort_net":
 		g.patrol.totalErrors++
 	case "cooldown_skip":
 		g.patrol.totalSkipped++
@@ -927,11 +1168,19 @@ func (g *Guard) recordProbeResult(r probeResult) {
 	lastP := g.patrol.lastPersistMS
 	g.patrol.mu.Unlock()
 
+	// Continuous network failures → check internet/proxy; abort if either is down.
+	if needGate {
+		if atomic.CompareAndSwapInt32(&g.patrol.connectivityChecking, 0, 1) {
+			go g.patrolConnectivityAbortGate(consec)
+		}
+	}
+
 	// Persist material actions into durable action_history (survives restart).
 	switch entry.Action {
 	case "deleted", "cooldown", "reenabled", "error",
 		"net_timeout", "net_canceled", "net_dns", "net_tls", "net_connect", "net_error",
-		"probe_http_4xx", "probe_http_5xx", "probe_unprocessable", "region_block", "cli_version":
+		"probe_http_4xx", "probe_http_5xx", "probe_unprocessable", "region_block", "cli_version",
+		"patrol_abort_net":
 		if g.store != nil {
 			_ = g.store.AppendAction(ActionEvent{
 				TimeMS: entry.TimeMS, Action: entry.Action, Source: "patrol",
@@ -1048,6 +1297,16 @@ func (g *Guard) probeOneCredential(f AuthFile, authDir string, client *http.Clie
 		// Network / transient 5xx: retry same model with short backoff (do not burn alternate models).
 		const maxNetAttempts = 3
 		for attempt := 1; attempt <= maxNetAttempts; attempt++ {
+			// stop/abort: skip further attempts immediately
+			g.patrol.mu.Lock()
+			stopNow := g.patrol.stopRequested
+			g.patrol.mu.Unlock()
+			if stopNow {
+				return probeResult{
+					authIndex: f.AuthIndex, fileName: f.Name, account: f.Account,
+					action: "net_canceled", reason: "patrol stopped", httpCode: -2, modelUsed: m,
+				}
+			}
 			c, b, err = g.doChatProbe(client, baseURL, af.AccessToken, probeHeaders, m)
 			if err != nil {
 				lastErr = err.Error()
@@ -1546,11 +1805,32 @@ func selectPatrolLogForUI(src []patrolLogEntry, limit int) []patrolLogEntry {
 	return out
 }
 
-// PatrolStop signals an in-progress sweep to stop after current in-flight probes.
-func (g *Guard) PatrolStop() {
+
+// requestPatrolStop marks stop and cancels in-flight probe HTTP so workers exit quickly.
+func (g *Guard) requestPatrolStop() {
 	g.patrol.mu.Lock()
 	g.patrol.stopRequested = true
+	cancel := g.patrol.probeCancel
 	g.patrol.mu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
+}
+
+// patrolProbeContext returns the current sweep context (or background if idle).
+func (g *Guard) patrolProbeContext() context.Context {
+	g.patrol.mu.Lock()
+	ctx := g.patrol.probeCtx
+	g.patrol.mu.Unlock()
+	if ctx == nil {
+		return context.Background()
+	}
+	return ctx
+}
+
+// PatrolStop signals an in-progress sweep to stop; cancels in-flight probes.
+func (g *Guard) PatrolStop() {
+	g.requestPatrolStop()
 }
 
 // PatrolRunOnce triggers an async manual sweep if not already running.
@@ -1631,7 +1911,7 @@ func (g *Guard) doChatProbe(client *http.Client, baseURL, token string, headers 
 }
 
 func (g *Guard) doProbePOST(client *http.Client, url, token string, headers map[string]string, payload []byte) (int, string, error) {
-	req, err := http.NewRequest(http.MethodPost, url, strings.NewReader(string(payload)))
+	req, err := http.NewRequestWithContext(g.patrolProbeContext(), http.MethodPost, url, strings.NewReader(string(payload)))
 	if err != nil {
 		return 0, "", err
 	}
@@ -1758,7 +2038,7 @@ func (g *Guard) listModelsForTokenWithClient(client *http.Client, token, baseURL
 	if baseURL == "" {
 		baseURL = DefaultProbeBaseURL
 	}
-	req, err := http.NewRequest(http.MethodGet, baseURL+"/models", nil)
+	req, err := http.NewRequestWithContext(g.patrolProbeContext(), http.MethodGet, baseURL+"/models", nil)
 	if err != nil {
 		return nil, "error", err.Error()
 	}

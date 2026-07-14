@@ -1,16 +1,16 @@
 # cpa-xai-quota-guard
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
-[![Version](https://img.shields.io/badge/version-0.3.7-blue.svg)](./CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.3.10-blue.svg)](./CHANGELOG.md)
 [![CI](https://github.com/Mortal520/cpa-xai-quota-guard/actions/workflows/build.yml/badge.svg)](https://github.com/Mortal520/cpa-xai-quota-guard/actions/workflows/build.yml)
 [![Release](https://img.shields.io/github/v/release/Mortal520/cpa-xai-quota-guard?include_prereleases)](https://github.com/Mortal520/cpa-xai-quota-guard/releases)
 
-CLIProxyAPI **原生 Go 插件**（当前版本 **0.3.7**）：仅针对 **xAI** 登录凭证做额度/死号管控、主动巡查、管理 UI 与用量统计。
+CLIProxyAPI **原生 Go 插件**（当前版本 **0.3.10**）：仅针对 **xAI** 登录凭证做额度/死号管控、主动巡查、管理 UI 与用量统计。
 
 | | |
 |--|--|
 | 仓库 | https://github.com/Mortal520/cpa-xai-quota-guard |
-| 最新 Release | https://github.com/Mortal520/cpa-xai-quota-guard/releases/tag/v0.3.7 |
+| 最新 Release | https://github.com/Mortal520/cpa-xai-quota-guard/releases/tag/v0.3.10 |
 | 插件 ID | `cpa-xai-quota-guard` |
 | 协议 | [MIT](./LICENSE) |
 
@@ -36,12 +36,12 @@ CPA_PLUGINS_DIR=/path/to/plugins bash scripts/install.sh
 ### AI 助手安装（整段丢给 Codex / Claude / ChatGPT）
 
 完整提示词与排障见 **[docs/AI_INSTALL.md](./docs/AI_INSTALL.md)**。  
-核心要求：下载 `v0.3.7` 对应架构 zip → 放入 `plugins/<goos>/<goarch>/` → 合并配置 → 重启 CPA → 校验 `state.version == 0.3.7`。
+核心要求：下载 `v0.3.10` 对应架构 zip → 放入 `plugins/<goos>/<goarch>/` → 合并配置 → 重启 CPA → 校验 `state.version == 0.3.7`。
 
 ### Linux amd64 最短命令
 
 ```bash
-VER=v0.3.7 ZIP=cpa-xai-quota-guard_linux_amd64.zip
+VER=v0.3.10 ZIP=cpa-xai-quota-guard_0.3.10_linux_amd64.zip
 DEST="${CPA_PLUGINS_DIR}/linux/amd64"
 mkdir -p "$DEST"
 curl -fL "https://github.com/Mortal520/cpa-xai-quota-guard/releases/download/${VER}/${ZIP}" -o /tmp/$ZIP
@@ -53,8 +53,10 @@ find /tmp/cpaqg -name '*.so' -exec cp -f {} "$DEST/cpa-xai-quota-guard.so" \;
 GitHub 访问不稳时加前缀：
 
 ```text
-https://ghproxy.com/https://github.com/Mortal520/cpa-xai-quota-guard/releases/download/v0.3.7/...
+https://ghproxy.com/https://github.com/Mortal520/cpa-xai-quota-guard/releases/download/v0.3.10/...
 ```
+
+> **商店安装 502**：CPA 要求 zip 名为 `cpa-xai-quota-guard_{version}_{goos}_{goarch}.zip`，库文件在 zip **根目录**，且 Release 含 `checksums.txt`。详见 [docs/INSTALL.md](./docs/INSTALL.md)「商店安装返回 502」。
 
 > 装库文件后**必须**配置 `management_url` / `management_key`，巡查还需 `patrol_auth_dir`。详见 [docs/INSTALL.md](./docs/INSTALL.md)。
 
@@ -246,7 +248,7 @@ plugins:
 | macOS amd64 | `plugins/darwin/amd64/cpa-xai-quota-guard.dylib` |
 | Windows amd64 | `plugins/windows/amd64/cpa-xai-quota-guard.dll` |
 
-Release 资产示例：`cpa-xai-quota-guard_linux_amd64.zip`（见 [v0.3.7](https://github.com/Mortal520/cpa-xai-quota-guard/releases/tag/v0.3.7)）。  
+Release 资产示例：`cpa-xai-quota-guard_linux_amd64.zip`（见 [v0.3.10](https://github.com/Mortal520/cpa-xai-quota-guard/releases/tag/v0.3.10)）。  
 构建产物与 zip **不要提交进 git**；发版走 GitHub Release（tag `v*` 触发 CI）。
 
 ### 验证

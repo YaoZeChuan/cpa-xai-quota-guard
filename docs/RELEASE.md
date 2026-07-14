@@ -26,8 +26,9 @@ CI 在 tag `v*` 时：
 ## 校验
 
 - Actions：`build` workflow 全绿（windows/arm64 允许跳过）
-- Release 页存在 `cpa-xai-quota-guard_<goos>_<goarch>.zip`
-- 解压路径符合 `plugins/<goos>/<goarch>/cpa-xai-quota-guard.*`
+- Release 页存在 `cpa-xai-quota-guard_{version}_{goos}_{goarch}.zip` + `checksums.txt`
+- zip **根目录**含 `cpa-xai-quota-guard.so|.dll|.dylib`（不要嵌套 goos/goarch）
+- CPA 安装后落盘到 `plugins/<goos>/<goarch>/cpa-xai-quota-guard-v{version}.*`
 
 ## 本地临时提权推 workflow（仅会话环境变量）
 

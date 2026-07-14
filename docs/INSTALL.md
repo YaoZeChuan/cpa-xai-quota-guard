@@ -7,14 +7,19 @@
 
 ## 平台与产物
 
-| 平台 | GOOS/GOARCH | 库文件名 | Release zip（CI） |
+| 平台 | GOOS/GOARCH | 库文件名 | Release zip（CPA 商店 / CI） |
 |------|-------------|---------|-------------------|
-| Linux x86_64 | linux/amd64 | `cpa-xai-quota-guard.so` | `cpa-xai-quota-guard_linux_amd64.zip` |
-| Linux ARM64 | linux/arm64 | `cpa-xai-quota-guard.so` | `cpa-xai-quota-guard_linux_arm64.zip` |
-| macOS Intel | darwin/amd64 | `cpa-xai-quota-guard.dylib` | `cpa-xai-quota-guard_darwin_amd64.zip` |
-| macOS Apple Silicon | darwin/arm64 | `cpa-xai-quota-guard.dylib` | `cpa-xai-quota-guard_darwin_arm64.zip` |
-| Windows x86_64 | windows/amd64 | `cpa-xai-quota-guard.dll` | `cpa-xai-quota-guard_windows_amd64.zip` |
-| Windows ARM64 | windows/arm64 | `cpa-xai-quota-guard.dll` | `cpa-xai-quota-guard_windows_arm64.zip`（可能缺工具链） |
+| Linux x86_64 | linux/amd64 | `cpa-xai-quota-guard.so`（**zip 根目录**） | `cpa-xai-quota-guard_{ver}_linux_amd64.zip` |
+| Linux ARM64 | linux/arm64 | `cpa-xai-quota-guard.so` | `cpa-xai-quota-guard_{ver}_linux_arm64.zip` |
+| macOS Intel | darwin/amd64 | `cpa-xai-quota-guard.dylib` | `cpa-xai-quota-guard_{ver}_darwin_amd64.zip` |
+| macOS Apple Silicon | darwin/arm64 | `cpa-xai-quota-guard.dylib` | `cpa-xai-quota-guard_{ver}_darwin_arm64.zip` |
+| Windows x86_64 | windows/amd64 | `cpa-xai-quota-guard.dll` | `cpa-xai-quota-guard_{ver}_windows_amd64.zip` |
+| Windows ARM64 | windows/arm64 | `cpa-xai-quota-guard.dll` | `cpa-xai-quota-guard_{ver}_windows_arm64.zip`（可能缺工具链） |
+
+> CPA 插件商店硬性约定（否则安装 API 返回 **HTTP 502 / plugin_install_failed**）：
+> 1. zip 文件名：`{plugin_id}_{version}_{goos}_{goarch}.zip`（version **无** `v` 前缀，如 `0.3.10`）
+> 2. zip 内动态库位于**根目录**（不能是 `linux/amd64/...` 嵌套路径）
+> 3. 同 Release 必须附带 `checksums.txt`（sha256）
 
 CPA 加载目录约定：
 
@@ -61,7 +66,7 @@ plugins:
 ```bash
 curl -X POST \
   -H "Authorization: Bearer <CPA_MANAGEMENT_KEY>" \
-  "http://<CPA_HOST>:<PORT>/v0/management/plugin-store/cpa-xai-quota-guard/install?source=<SOURCE_ID>&version=v0.3.7"
+  "http://<CPA_HOST>:<PORT>/v0/management/plugin-store/cpa-xai-quota-guard/install?source=<SOURCE_ID>&version=v0.3.10"
 ```
 
 > 商店安装依赖 CPA 能拉取 GitHub Release 资产。若机器无法访问 GitHub，改用方式 B/C。
@@ -97,7 +102,7 @@ plugins:
 Release zip 下载也可同样加前缀，例如：
 
 ```text
-https://ghproxy.com/https://github.com/Mortal520/cpa-xai-quota-guard/releases/download/v0.3.7/cpa-xai-quota-guard_linux_amd64.zip
+https://ghproxy.com/https://github.com/Mortal520/cpa-xai-quota-guard/releases/download/v0.3.10/cpa-xai-quota-guard_linux_amd64.zip
 ```
 
 > 加速域名仅为网络可达性方案，**不改变**插件校验与版本语义；密钥仍只写本地配置。
@@ -160,11 +165,53 @@ docker restart cli-proxy-api   # 或 systemctl restart ...
 
 | 现象 | 排查 |
 |------|------|
-| `plugin_install_failed` | 架构 zip 是否存在；CPA 能否访问 GitHub Release；看返回 `message` |
+| `plugin_install_failed` / **HTTP 502** | 见下方「商店 502」专节；常见：资产名不含版本、zip 内嵌套路径、缺 checksums.txt、CPA 无法访问 GitHub |
+| `plugin_store_registry_failed` / 502 | CPA 拉不到 `registry.json`（raw.githubusercontent.com 被墙）；改用 ghproxy 商店源或手动安装 |
 | 404 管理路由 | 插件未加载/版本错；查 host 日志 plugin registered |
 | 配置页空白 | 管理密钥 / iframe 会话；浏览器 localStorage key |
 | xai 凭证数 0 | management_url/key；auth-files API；缓存粘滞日志 |
 | 巡查全网络错误 | `patrol_proxy_url` / 出口 IP / CLI 头 426 |
+
+
+## 商店安装返回 502（plugin_install_failed）
+
+CPA `POST /v0/management/plugin-store/:id/install` 在安装失败时统一返回 **HTTP 502**，`error` 多为 `plugin_install_failed` / `plugin_store_registry_failed`。
+
+### 根因对照（本仓库历史问题）
+
+| 错误 message 特征 | 原因 | 处理 |
+|-------------------|------|------|
+| `release asset cpa-xai-quota-guard_0.x.y_linux_amd64.zip not found` | Release 只挂了旧名 `cpa-xai-quota-guard_linux_amd64.zip` | 升级到 **≥ v0.3.10** 带版本号资产；或手动安装 |
+| `release asset checksums.txt not found` | 缺校验文件 | 同左 |
+| `target dynamic library must be at zip root` / `zip does not contain cpa-xai-quota-guard.so` | zip 打成了 `linux/amd64/xxx.so` 嵌套结构 | 用新 CI 产物（库在 zip 根） |
+| `unexpected status 403/429` / timeout | CPA 出网访问 GitHub 失败 | 配置出网代理 / `store` 相关 token；或方式 B/C 手动装 |
+| `plugin_store_registry_failed` | 拉 registry 失败 | 商店源换 ghproxy raw，或自建镜像 `registry.mirror.json` |
+
+### 正确的商店源配置
+
+```yaml
+plugins:
+  enabled: true
+  dir: "plugins"
+  store-sources:
+    - "https://raw.githubusercontent.com/Mortal520/cpa-xai-quota-guard/main/registry.json"
+    # 国内/受限网络示例：
+    # - "https://ghproxy.com/https://raw.githubusercontent.com/Mortal520/cpa-xai-quota-guard/main/registry.json"
+```
+
+### 正确的 Release 资产示例（0.3.10）
+
+```text
+cpa-xai-quota-guard_0.3.10_linux_amd64.zip   # 内含根目录 cpa-xai-quota-guard.so
+cpa-xai-quota-guard_0.3.10_windows_amd64.zip
+checksums.txt
+```
+
+### 临时绕过（推荐在 502 时）
+
+1. 从 Releases 下载对应 zip（或用 `scripts/install.sh`）
+2. 解压得到 `cpa-xai-quota-guard.so`，放到 `plugins/linux/amd64/`
+3. 合并 `plugins.configs.cpa-xai-quota-guard` 后重启 CPA
 
 ## 安全
 
@@ -177,7 +224,7 @@ docker restart cli-proxy-api   # 或 systemctl restart ...
 1. 改代码 → `go test` → 部署实测  
 2.  bump `pluginVer` + `registry.json` version + CHANGELOG  
 3. commit / push `main`  
-4. 打 tag：`git tag v0.3.7 && git push origin v0.3.7`  
+4. 打 tag：`git tag v0.3.10 && git push origin v0.3.10`  
 5. CI 构建多平台 zip 并挂到 GitHub Release  
 6. 确认 raw `registry.json` 可访问  
 
