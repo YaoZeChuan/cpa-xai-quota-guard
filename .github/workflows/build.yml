@@ -39,34 +39,28 @@ jobs:
             goos: linux
             goarch: amd64
             ext: .so
-            zip_name: cpa-xai-quota-guard_linux_amd64
           - os: ubuntu-latest
             goos: linux
             goarch: arm64
             ext: .so
-            zip_name: cpa-xai-quota-guard_linux_arm64
             cc: aarch64-linux-gnu-gcc
             install_cc: sudo apt-get update && sudo apt-get install -y gcc-aarch64-linux-gnu
           - os: macos-latest
             goos: darwin
             goarch: amd64
             ext: .dylib
-            zip_name: cpa-xai-quota-guard_darwin_amd64
           - os: macos-latest
             goos: darwin
             goarch: arm64
             ext: .dylib
-            zip_name: cpa-xai-quota-guard_darwin_arm64
           - os: windows-latest
             goos: windows
             goarch: amd64
             ext: .dll
-            zip_name: cpa-xai-quota-guard_windows_amd64
           - os: windows-latest
             goos: windows
             goarch: arm64
             ext: .dll
-            zip_name: cpa-xai-quota-guard_windows_arm64
 
     steps:
       - uses: actions/checkout@v4
@@ -80,6 +74,22 @@ jobs:
         if: matrix.install_cc != ''
         run: ${{ matrix.install_cc }}
 
+      - name: Resolve version
+        id: ver
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Prefer git tag (v0.3.10 -> 0.3.10); else main.go pluginVer; else 0.0.0-dev
+          REF="${GITHUB_REF_NAME:-}"
+          if [[ "$REF" == v* ]]; then
+            VER="${REF#v}"
+          else
+            VER=$(grep -E 'pluginVer\s*=' main.go | head -1 | sed -E 's/.*"([^"]+)".*/\1/')
+            VER="${VER:-0.0.0-dev}"
+          fi
+          echo "version=$VER" >> "$GITHUB_OUTPUT"
+          echo "Resolved plugin version=$VER"
+
       - name: Fetch CLIProxyAPI SDK source
         shell: bash
         run: |
@@ -88,13 +98,14 @@ jobs:
           printf '\nreplace github.com/router-for-me/CLIProxyAPI/v7 => ./CLIProxyAPI-src\n' >> go.mod
           go mod download 2>&1 | tee download.log || true
 
-      - name: Build c-shared
+      - name: Build c-shared (CPA plugin-store layout)
         shell: bash
         env:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
           CGO_ENABLED: '1'
           CC: ${{ matrix.cc }}
+          PLUGIN_VER: ${{ steps.ver.outputs.version }}
         run: |
           set -euo pipefail
           mkdir -p bin dist
@@ -112,21 +123,33 @@ jobs:
             exit $code
           fi
           ls -la bin
-          # package zip for CPA plugin-store / manual install
-          # CPA expects plugins/<goos>/<goarch>/<name>.so|dll|dylib
-          STAGE="dist/stage/${{ matrix.goos }}/${{ matrix.goarch }}"
+
+          # CPA plugin-store requires:
+          # 1) asset name: {id}_{version}_{goos}_{goarch}.zip
+          # 2) library at ZIP ROOT (not plugins/goos/goarch/)
+          #    filename: cpa-xai-quota-guard.so|.dll|.dylib  (or cpa-xai-quota-guard-v{ver}.*)
+          # 3) release also ships checksums.txt (aggregated in release job)
+          ID="cpa-xai-quota-guard"
+          VER="${PLUGIN_VER}"
+          GOOS="${{ matrix.goos }}"
+          GOARCH="${{ matrix.goarch }}"
+          EXT="${{ matrix.ext }}"
+          ZIP_NAME="${ID}_${VER}_${GOOS}_${GOARCH}.zip"
+          STAGE="dist/pkg"
+          rm -rf "$STAGE"
           mkdir -p "$STAGE"
-          cp -f "$OUT" "$STAGE/cpa-xai-quota-guard${{ matrix.ext }}"
+          cp -f "$OUT" "${STAGE}/${ID}${EXT}"
           (
-            cd dist/stage
+            cd "$STAGE"
             if command -v zip >/dev/null 2>&1; then
-              zip -r "../${{ matrix.zip_name }}.zip" "${{ matrix.goos }}"
+              zip -9 "../${ZIP_NAME}" "${ID}${EXT}"
             else
-              # Windows runners: use PowerShell Compress-Archive via bash fallback
-              powershell.exe -NoProfile -Command "Compress-Archive -Path '${{ matrix.goos }}' -DestinationPath '../${{ matrix.zip_name }}.zip' -Force" || true
+              powershell.exe -NoProfile -Command "Compress-Archive -Path '${ID}${EXT}' -DestinationPath '../${ZIP_NAME}' -Force"
             fi
           )
-          ls -la dist || true
+          ls -la dist
+          # expose names for artifact upload
+          echo "ZIP_NAME=${ZIP_NAME}" >> "$GITHUB_ENV"
 
       - name: Upload library artifact
         uses: actions/upload-artifact@v4
@@ -139,8 +162,8 @@ jobs:
       - name: Upload zip package
         uses: actions/upload-artifact@v4
         with:
-          name: zip-${{ matrix.zip_name }}
-          path: dist/${{ matrix.zip_name }}.zip
+          name: zip-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: dist/cpa-xai-quota-guard_*.zip
           if-no-files-found: warn
           retention-days: 30
 
@@ -159,11 +182,48 @@ jobs:
           path: release-assets
           pattern: zip-*
           merge-multiple: true
-      - name: List assets
-        run: find release-assets -type f -print
+      - name: Build checksums.txt
+        shell: bash
+        run: |
+          set -euo pipefail
+          find release-assets -type f -name '*.zip' -print
+          mkdir -p out
+          # flatten zips to out/
+          find release-assets -type f -name '*.zip' -exec cp -f {} out/ \;
+          cd out
+          ls -la
+          # sha256sum format: "<hex>  <filename>" (two spaces) — required by CPA pluginstore.ParseChecksums
+          if command -v sha256sum >/dev/null 2>&1; then
+            sha256sum *.zip | tee checksums.txt
+          else
+            for f in *.zip; do
+              h=$(shasum -a 256 "$f" | awk '{print $1}')
+              printf '%s  %s\n' "$h" "$f"
+            done | tee checksums.txt
+          fi
+          cat checksums.txt
       - name: Create / update Release
         uses: softprops/action-gh-release@v2
         with:
-          files: release-assets/**/*.zip
+          files: |
+            out/*.zip
+            out/checksums.txt
           generate_release_notes: true
           fail_on_unmatched_files: false
+          body: |
+            ## CPA 插件商店安装说明
+
+            本 Release 资产已按 **CLIProxyAPI plugin-store** 约定打包：
+
+            | 约定 | 值 |
+            |------|----|
+            | zip 名 | `cpa-xai-quota-guard_{version}_{goos}_{goarch}.zip` |
+            | zip 内容 | **根目录** `cpa-xai-quota-guard.so` / `.dll` / `.dylib` |
+            | 校验 | `checksums.txt`（sha256） |
+
+            若商店安装返回 **502 / plugin_install_failed**：
+            1. 确认 CPA 能访问 `api.github.com` 与 `github.com`（或配置插件商店代理/Token）
+            2. 确认下载的是带版本号的 zip（不是旧版 `*_linux_amd64.zip`）
+            3. 备选：手动解压到 `plugins/<goos>/<goarch>/` 后重启
+
+            文档：`docs/INSTALL.md`
