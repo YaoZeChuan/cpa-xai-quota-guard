@@ -1,15 +1,15 @@
 # cpa-xai-quota-guard
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
-[![Version](https://img.shields.io/badge/version-0.3.10-blue.svg)](./CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.3.11-blue.svg)](./CHANGELOG.md)
 [![Release](https://img.shields.io/github/v/release/Mortal520/cpa-xai-quota-guard)](https://github.com/Mortal520/cpa-xai-quota-guard/releases)
 
-CLIProxyAPI **原生 Go 插件**（**0.3.10**）：只管控 **xAI** 凭证——额度冷却、死号删除、主动/定时巡查、管理 UI。
+CLIProxyAPI **原生 Go 插件**（**0.3.11**）：只管控 **xAI** 凭证——额度冷却、死号删除、主动/定时巡查、管理 UI。
 
 | | |
 |--|--|
 | 仓库 | https://github.com/Mortal520/cpa-xai-quota-guard |
-| Release | https://github.com/Mortal520/cpa-xai-quota-guard/releases/tag/v0.3.10 |
+| Release | https://github.com/Mortal520/cpa-xai-quota-guard/releases |
 | 插件 ID | `cpa-xai-quota-guard` |
 | 协议 | [MIT](./LICENSE) |
 
@@ -37,17 +37,17 @@ plugins:
 
 1. 写入/合并上述配置并**重启 CPA**
 2. 管理中心 → **插件商店** → **xAI Quota Guard** → 安装
-3. 插件菜单打开配置页；确认 state 中 `version == 0.3.10`
+3. 插件菜单打开配置页；确认 state 中 `version == 0.3.11`
 
 商店从 GitHub Release 拉 zip，CPA 能访问 GitHub（或你配置的加速）时可用。  
-**502 / plugin_install_failed**：资产名必须是 `cpa-xai-quota-guard_{version}_{goos}_{goarch}.zip`，库在 zip **根目录**，且 Release 带 `checksums.txt`。v0.3.10 已按此布局发布。详见 [docs/INSTALL.md](./docs/INSTALL.md)。
+**502 / plugin_install_failed**：资产名必须是 `cpa-xai-quota-guard_{version}_{goos}_{goarch}.zip`，库在 zip **根目录**，且 Release 带 `checksums.txt`。v0.3.10 起已按此布局发布；当前代码 0.3.11。详见 [docs/INSTALL.md](./docs/INSTALL.md)。
 
 ## 其它安装方式
 
 | 方式 | 说明 |
 |------|------|
 | 脚本 | `CPA_PLUGINS_DIR=/path/to/plugins bash scripts/install.sh`（或 curl 管道，见 [docs/INSTALL.md](./docs/INSTALL.md)） |
-| 手动 | 下载 [v0.3.10](https://github.com/Mortal520/cpa-xai-quota-guard/releases/tag/v0.3.10) 对应架构 zip → 库文件放到 `plugins/<goos>/<goarch>/` → 合并配置 → 重启 |
+| 手动 | 下载 [Releases](https://github.com/Mortal520/cpa-xai-quota-guard/releases) 最新对应架构 zip → 库文件放到 `plugins/<goos>/<goarch>/` → 合并配置 → 重启 |
 | AI 助手 | [docs/AI_INSTALL.md](./docs/AI_INSTALL.md) |
 
 库文件名：`cpa-xai-quota-guard.so` / `.dll` / `.dylib`。
@@ -69,7 +69,7 @@ plugins:
 - **区域/模型不可用、426、404/5xx、网络** → 不删（日志/分桶）
 - **用户手动禁用**永不自动启用；仅恢复本插件自动禁用的号
 - **主动/定时巡查**、弹性并发、网络闸门（连续传输失败时检测公网/代理并中止）
-- **主题跟随 CPA/CPAMP**（无插件独立深浅色开关；0.3.10 深色 token 协调）
+- **主题跟随 CPA/CPAMP**（无插件独立深浅色开关；0.3.10 起深色 token 协调；0.3.11 日池默认 2M）
 
 完整错误矩阵与设计：[DESIGN.md](./DESIGN.md) · 变更记录：[CHANGELOG.md](./CHANGELOG.md)
 
@@ -93,7 +93,7 @@ curl -sS -H "X-Management-Key: <KEY>" \
   "http://127.0.0.1:8317/v0/management/cpa-xai-quota-guard/state?view=focus"
 ```
 
-期望含 `"version":"0.3.10"`。
+期望含 `"version":"0.3.11"`。
 
 ## 文档
 

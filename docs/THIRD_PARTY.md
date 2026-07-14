@@ -20,4 +20,9 @@
 1. 根目录 `registry.json` 作为 CPA `store-sources` 入口  
 2. 多平台 zip 只上 GitHub Release，不进 git  
 3. 文档写清：商店安装 / Release 手动 / 本机构建 三条路径  
-4. 升级=换库文件+重启+核对 version；卸载=关配置+删库文件+重启  
+4. 升级=换库文件+重启+核对 version；卸载=关配置+删库文件+重启
+
+## Downstream fork feedback
+
+- [NikaidouYui/cpa-xai-quota-guard](https://github.com/NikaidouYui/cpa-xai-quota-guard)：DefaultFreeLimit 1M→2M 与 state 升级强制对齐；已合入上游 0.3.11。
+- [YaoZeChuan/cpa-xai-quota-guard](https://github.com/YaoZeChuan/cpa-xai-quota-guard)：CI/registry 自托管改名；zip 仍嵌套 goos/goarch，**未**合入（会商店 502）。

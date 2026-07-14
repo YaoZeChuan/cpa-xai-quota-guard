@@ -7,8 +7,9 @@ import (
 	"time"
 )
 
-// DefaultFreeLimit is the free-tier rolling window token limit seen in Grok errors.
-const DefaultFreeLimit int64 = 1_000_000
+// DefaultFreeLimit is the free-tier rolling window token limit used for daily pool estimates.
+// Product default: 2M tokens / account / rolling 24h (observed in live free-usage limit samples).
+const DefaultFreeLimit int64 = 2_000_000
 
 // ZeroTokenAlertThreshold consecutive successful xAI events with empty Detail.
 const ZeroTokenAlertThreshold int64 = 5
@@ -157,9 +158,8 @@ func EnsureUsageStats(s *UsageStats) *UsageStats {
 	if s.UsageByAuth == nil {
 		s.UsageByAuth = map[string]*AccountUsageSnapshot{}
 	}
-	if s.DefaultLimitPerAcct <= 0 {
-		s.DefaultLimitPerAcct = DefaultFreeLimit
-	}
+	// Always align with product constant so upgrades (1M→2M) apply to existing state files.
+	s.DefaultLimitPerAcct = DefaultFreeLimit
 	if s.DayKey == "" {
 		s.DayKey = DayKeyShanghai(time.Now())
 	}
@@ -362,7 +362,7 @@ func BuildMetricsView(xaiTotal, xaiEnabled, xaiDisabled int, st UsageStats) Metr
 }
 
 // BuildMetricsViewOpts:
-//   - Daily total quota (QuotaTotalEst) = enabled xAI * DefaultFreeLimit (1M rolling 24h each).
+//   - Daily total quota (QuotaTotalEst) = enabled xAI * DefaultFreeLimit (2M rolling 24h each).
 //     Disabled credentials are NOT capacity; includeUnobservedEst=false → known live limits only.
 //   - Used today/total = usage.handle real tokens only (no free-usage actual floor, no success×N).
 //   - Rolling used/limit = free-usage snapshots for still-live auth only.
@@ -383,11 +383,8 @@ func BuildMetricsViewOpts(xaiTotal, xaiEnabled, xaiDisabled int, st UsageStats, 
 		usedKnown += q.Actual
 		limitKnown += q.Limit
 	}
-	def := st.DefaultLimitPerAcct
-	if def <= 0 {
-		def = DefaultFreeLimit
-	}
-	// Daily free-tier capacity: each ENABLED account ≈ 1M / rolling 24h.
+	def := DefaultFreeLimit
+	// Daily free-tier capacity: each ENABLED account ≈ 2M / rolling 24h.
 	// Disabled accounts contribute 0 usable capacity.
 	dailyCapEnabled := int64(xaiEnabled) * def
 	// Unobserved among enabled (not total inventory): how many enabled lack a snapshot.
@@ -423,7 +420,7 @@ func BuildMetricsViewOpts(xaiTotal, xaiEnabled, xaiDisabled int, st UsageStats, 
 		alertMsg = "连续成功请求缺少 usage Detail token，可能 CPA 未发布用量明细；日历今日累计可能偏低。"
 	}
 
-	note := "仅xAI；日额度池=启用凭证×1M(rolling 24h)；已用=usage 真实token；滚动池=存活凭证 free-usage 快照；禁用不计入额度与已用。"
+	note := "仅xAI；日额度池=启用凭证×2M(rolling 24h)；已用=usage 真实token；滚动池=存活凭证 free-usage 快照；禁用不计入额度与已用。"
 	return MetricsView{
 		XAITotal:              xaiTotal,
 		XAIEnabled:            xaiEnabled,

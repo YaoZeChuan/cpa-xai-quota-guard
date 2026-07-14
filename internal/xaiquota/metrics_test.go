@@ -58,7 +58,7 @@ func TestBuildMetricsViewLiveFilterAndDailyPool(t *testing.T) {
 	live := map[string]bool{"a1": true}
 	v := BuildMetricsViewOpts(10, 5, 5, st, true, live)
 	if v.QuotaTotalEst != 5*DefaultFreeLimit {
-		t.Fatalf("daily pool est=%d want %d (enabled*1M)", v.QuotaTotalEst, 5*DefaultFreeLimit)
+		t.Fatalf("daily pool est=%d want %d (enabled*2M)", v.QuotaTotalEst, 5*DefaultFreeLimit)
 	}
 	if v.QuotaKnownAccounts != 1 || v.RollingAccounts != 1 {
 		t.Fatalf("live filter known=%d rolling_acc=%d", v.QuotaKnownAccounts, v.RollingAccounts)

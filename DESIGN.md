@@ -233,7 +233,7 @@ dead credential (401/402/403 白名单)
 1. free-usage 滚动窗口以 xAI 文案与生产样例为准；无 `Retry-After` 时用 24h 默认。  
 2. 402 与 429 free-usage **不得混淆**：均为冷却，但 **signal/Reason/恢复路径不同**（429 到点 tick；402 以巡查探测为主、tick 软上限为辅）。  
 3. 凭证数依赖 management `auth-files`；主机繁忙时可能瞬时失败 → sticky 掩盖，非实时强一致。  
-4. `include_unobserved_quota_est=true` 时总额度为 **估**，未观测账号按默认 1M 计。  
+4. `include_unobserved_quota_est=true` 时总额度为 **估**，未观测账号按默认 2M 计。  
 5. 今日已用依赖 CPA 是否在 usage 事件中带 token Detail；缺 Detail 时可能偏低（可用 CPAMP 回补地板）。  
 6. 失败但从未成功的账号默认保留，不自动清池。  
 
@@ -273,7 +273,7 @@ dead credential (401/402/403 白名单)
 
 ## 10. 状态栏与 metrics（0.2.18+）
 
-- `QuotaTotalEst`（日额度池）：默认 `xai_enabled * DefaultFreeLimit(1M)`；禁用账号不计入。
+- `QuotaTotalEst`（日额度池）：默认 `xai_enabled * DefaultFreeLimit(2M)`；禁用账号不计入。
 - `UsedToday` / `UsedTotal`：仅 `usage.handle` 累加；`ObserveFreeQuota` **只写** `QuotaByAuth` 快照。
 - `RollingUsedKnown` / `RollingLimitKnown`：存活 auth 的 free-usage 快照；`liveAuth` 过滤已删号。
 - UI 进度条：今日已用 / 日额度池。

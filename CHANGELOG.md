@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.3.11
+
+- **日额度池默认**：单账号估算由 **1M → 2M**（DefaultFreeLimit）；升级后覆盖 state 里旧的 1M 默认（与线上 free-usage limit=2000000 样本对齐）
+- 同步 UI 文案 / config 说明 / registry 版本
+- 吸收下游 fork [NikaidouYui/cpa-xai-quota-guard](https://github.com/NikaidouYui/cpa-xai-quota-guard) 有价值改动；其商店 CI 本仓 main 已具备
 ## 0.3.10
 
 - **修复 CPA 商店安装 502**：Release 资产对齐 CLIProxyAPI `pluginstore` 约定
